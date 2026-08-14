@@ -120,7 +120,7 @@ dsh --profile my-profile
 
 ### 方式 C:把链接丢给 AI 装(最省事)
 
-把下面这句话复制给任意 AI(DSH 会话里的 Agent、ChatGPT 等都行),它自己会 clone、安装并告诉你重启:
+把下面这句话复制给任意 AI(DSH 会话里的),它自己会 clone、安装并告诉你重启:
 
 > 帮我安装 https://github.com/Xenia0922/dsh-opencode-go-usage 这个 DSH 插件:按仓库 README 的方式 B 装进我的 DSH profile(数据目录以 DSH_HOME 环境变量为准),装完告诉我需要重启 DSH
 
