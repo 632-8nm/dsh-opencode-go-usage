@@ -4,9 +4,12 @@
 
 **DeepSeek Harness 插件 — 可拖拽缩放的悬浮仪表盘,实时展示 OpenCode Go 配额、逐请求用量与花费**
 
+> A DeepSeek Harness plugin — 数据完全本机获取,API key 不出本机、不进日志。
+
 ![license](https://img.shields.io/badge/license-MIT-blue.svg)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 ![DSH](https://img.shields.io/badge/DSH-Plugin-4D6BFE)
+![dsh-bundle](https://img.shields.io/badge/dsh-bundle%20plugin-4D6BFE)
 
 </div>
 
@@ -87,14 +90,18 @@
 2. 将 [`src/host.js`](src/host.js) 内容粘贴为 `code.host`,将 [`src/client.js`](src/client.js) 内容粘贴为 `code.client`
 3. `cordis_run` 授权后,右下角出现 FAB 胶囊
 
-### 方式 B:Bundle 插件
+### 方式 B:Bundle 插件(官方安装方式)
 
-```bash
+```sh
 git clone https://github.com/Xenia0922/dsh-opencode-go-usage.git
 cd dsh-opencode-go-usage
-# 将包放入 $DSH_HOME/profiles/node_modules 并在 cordis.yml 加入插件行
-# package.json 已声明 dsh.bundle.patch -> cordis.patch.yml
+
+# 从父目录安装进 profile 并启动
+dsh plugin --profile my-profile add ./dsh-opencode-go-usage
+dsh --profile my-profile
 ```
+
+`package.json` 已声明官方 bundle 字段(`dsh.bundle.patch -> cordis.patch.yml`),安装后插件行自动注册(`opencode-go-usage`)。
 
 ## 使用
 
