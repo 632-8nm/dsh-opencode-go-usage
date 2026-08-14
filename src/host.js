@@ -18,10 +18,9 @@ return {
     if (shell === undefined || sq === undefined) return
 
     const PRICING = {
-  // 注:deepseek-v4-flash 为 2026-08 从本机 opencode.db 的 opencode-go 真实计费行
-  // (2667 行,含官方 cost)最小二乘拟合所得;其余模型为公开价估算。
-  // cache 读单价按实测"约 56% 的 cache 读行免费"折算半价,避免 DSH 估算虚高。
-  "deepseek-v4-flash": { in: 0.299, out: 0.215, cr: 0.00215, cw: 0.253 },
+  // 官方定价(opencode.ai/docs/go,per 1M tokens;deepseek-v4-flash 限时 2× 用量)。
+  // 勿用本机拟合替换:官方价才是 DSH 估算的准确口径。
+  "deepseek-v4-flash": { in: 0.14, out: 0.28, cr: 0.0028, cw: 0.0 },
   "deepseek-v4-pro": { in: 0.435, out: 0.87, cr: 0.003625, cw: 0.0 },
   "gpt-5.6-luna": { in: 0.2, out: 1.2, cr: 0.02, cw: 0.25 },
   "glm-5.2": { in: 1.4, out: 4.4, cr: 0.26, cw: 0.0 },
@@ -122,9 +121,10 @@ return {
     }
 
     // --- 数据源 2+3:opencode 官方逐请求 + codex 代理日志(只读 sqlite,弹性降级) ---
-    // 注意:cc-switch 的 proxy_request_logs 含 codex_session/opencode_session 直连
-    // 会话记录(data_source != 'proxy'),那是各应用官方直连流量,不属于 Go key;
-    // 只有 data_source='proxy' 的行才是真正走 cc-switch 代理 → OpenCode Go 上游。
+    // codex 口径:codex 的 config.toml 指向 opencode.ai/zen/go/v1(Go key),无论
+    // 走 cc-switch 代理(proxy)还是直连(codex_session,cc-switch 同步会话记录),
+    // 都是 Go 账号流量,全部计入。opencode_session 直连记录则与 opencode.db 重复,
+    // 由 opencode.db 来源覆盖(不取 app_type='opencode')。
     const PY_SCRIPT = [
       'import sqlite3, json, os',
       'HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or r"C:\\Users\\Xenia"',
@@ -168,7 +168,7 @@ return {
       '    if not os.path.exists(CCDB): raise FileNotFoundError("not found: " + CCDB)',
       '    con2 = sqlite3.connect("file:" + CCDB.replace(chr(92), "/") + "?mode=ro", uri=True)',
       '    cur2 = con2.cursor()',
-      '    cur2.execute("SELECT model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_cost_usd, created_at FROM proxy_request_logs WHERE app_type = \'codex\' AND data_source = \'proxy\'")',
+      '    cur2.execute("SELECT model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_cost_usd, created_at FROM proxy_request_logs WHERE app_type = \'codex\'")',
       '    for i, r in enumerate(cur2.fetchall()):',
       '        try:',
       '            cost = float(r[5] or 0)',
