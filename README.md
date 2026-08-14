@@ -215,13 +215,15 @@ DSH 会话事件只有 token 没有 cost,按官方定价表估算(opencode 应�
 的 reconcile 步骤),然后重启 DSH。重启后 host 路由与右下角 FAB 自动出现。
 
 **官方视图怎么配置?**
-面板"官方"视图直接调官网 `usage.list` 接口(账户级逐请求计费,与官网账单一致):
-1. 浏览器打开 `https://opencode.ai` 并登录,按 F12 → Application → Cookies,复制名为 `auth` 的 cookie 值
-2. 打开 `https://opencode.ai/workspace/<你的工作区>/usage`,地址栏里的 `wrk_xxx` 即 workspaceId
-3. 写入本机配置文件 `~/.config/dsh-opencode-go-usage.json`:
-   `{"authCookie": "Fe26.2*...", "workspaceId": "wrk_xxx"}`
-4. 面板切到"官方"视图即显示官方金额(15 分钟缓存);cookie 失效后更新该文件即可。
-   数据只在本机使用,不进日志、不发送任何第三方。
+面板"官方"视图直接调官网 `usage.list` 接口(账户级逐请求计费,与官网账单一致),凭据获取**全自动**:
+
+1. **零操作(推荐)**:用 Edge 登录过 `opencode.ai` 即可——插件会自动从 Edge 的 cookie 库提取 `auth` cookie 并解析 workspaceId(DPAPI + AES-GCM 解密,全部本机处理)。Edge 正在运行时会提示"关闭 Edge 后刷新",关闭后自动完成
+2. **手动兜底**:面板官方视图的错误区可直接粘贴 `authCookie` 和 `workspaceId` 并保存
+   - cookie:浏览器 F12 → Application → Cookies → 复制 `auth` 值
+   - workspaceId:打开 `https://opencode.ai/workspace/<你的工作区>/usage`,地址栏里的 `wrk_xxx`
+3. 配置保存在 `~/.config/dsh-opencode-go-usage.json`(cookie 失效后自动重新提取或按上述更新)
+
+凭据只在本机使用,不进日志、不发送任何第三方;15 分钟缓存,失败自动降级不影响本地视图。
 
 ## 🔒 隐私
 

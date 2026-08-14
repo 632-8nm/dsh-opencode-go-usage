@@ -2,6 +2,17 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.5.1] - 2026-08-16
+
+### 功能(官方凭据零操作获取)
+- **Edge cookie 自动提取**:配置缺失/过期时,自动从 Edge 的 cookie 库解密 `opencode.ai` 的 `auth` cookie(DPAPI + AES-GCM,全部本机处理),再调 workspaces API 解析 workspaceId,写入配置——用 Edge 登录过官网即可,无需任何手动复制
+- **手动兜底 UI**:面板官方视图错误区可直接粘贴 `authCookie` + `workspaceId` 并保存(host 新增 `POST /ocgo-usage/config` 端点)
+- **友好错误码**:Edge 运行中(`EDGE_RUNNING`,关闭后刷新即自动提取)/ 未登录 / 无 Edge / 缺 cryptography 等,面板分别显示对应指引
+
+### 质量
+- 端到端验证:无配置 + Edge 运行 → `EDGE_RUNNING` 正确;配置有效 → 5267 条正常拉取
+- 测试扩至 10 个(自动提取/DPAPI/AES-GCM/保存端点断言)
+
 ## [1.5.0] - 2026-08-16
 
 ### 功能(官方账户级数据源)

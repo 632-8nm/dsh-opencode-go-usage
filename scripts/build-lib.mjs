@@ -27,7 +27,16 @@ function stripWrapper(text) {
 
 function buildHost() {
   const text = stripWrapper(readFileSync(join(root, 'src/host.js'), 'utf8'))
+  // 注入 Node 内置模块(bundle 形态可用;动态沙箱无这些符号,apply 内必须用
+  // typeof 守卫后再访问,否则动态模式会 ReferenceError)。
+  const imports = [
+    "import { writeFileSync as _ocgoWriteFileSync, mkdirSync as _ocgoMkdirSync } from 'node:fs'",
+    "import { join as _ocgoJoin } from 'node:path'",
+    "import { homedir as _ocgoHomedir } from 'node:os'",
+    '',
+  ].join('\n')
   const outText = 'export const name = ' + JSON.stringify(HOST_NAME) + '\n' +
+    imports +
     text.replace(/^function apply\(ctx\) \{/, 'export function apply(ctx) {') + '\n'
   mkdirSync(join(root, 'lib'), { recursive: true })
   writeFileSync(join(root, 'lib', 'index.js'), outText)
