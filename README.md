@@ -84,13 +84,15 @@ OpenCode Go 的限额与定价来自 [opencode.ai/docs/go](https://opencode.ai/d
 
 ## 🚀 安装
 
-### 方式 A:会话内动态加载(推荐,免构建,功能完整)
+### 方式 A:会话内动态加载(快速体验,免构建)
 
 1. 打开 DSH 会话,让 Agent 执行 `cordis_define`(kind: new, idPrefix: `zenus`)
 2. 将 [`src/host.js`](src/host.js) 内容粘贴为 `code.host`,将 [`src/client.js`](src/client.js) 内容粘贴为 `code.client`
 3. `cordis_run` 授权后,右下角出现 FAB 胶囊
 
-### 方式 B:Bundle 插件(官方安装方式,重启后自动加载)
+> ⚠️ 动态定义只活在当前进程,**DSH 重启后丢失**;想长期使用请用方式 B。
+
+### 方式 B:Bundle 插件(推荐,随 DSH 启动自动加载)
 
 > host 半区注册本地 HTTP 路由(`webServer` → `/ocgo-usage/fetch`),客户端同源
 > `fetch` 取数——**bundle 形态功能完整**,且随 DSH 启动自动加载,无需每次会话重建。
@@ -104,6 +106,10 @@ cd dsh-opencode-go-usage
 dsh plugin --profile my-profile add ./dsh-opencode-go-usage
 dsh --profile my-profile
 ```
+
+> 💡 插件目录路径含**空格**时 `dsh plugin add` 会解析失败(如 `D:\Opencode view\...`):
+> 先把目录放到无空格路径(如 junction 链接到 `C:\Users\<你>\dsh-plugin-src\...`),
+> 再 `cd` 到 profile 目录用 `pnpm add link:<无空格路径>` 安装。
 
 `dsh plugin add` 会执行 `pnpm add` 并把声明了 `dsh.bundle` 的包写进
 `dsh.profile.bundles`;bundle 的 `cordis.patch.yml` 随后插入插件行
@@ -138,7 +144,7 @@ dsh-opencode-go-usage/
 │   └── build-lib.mjs    # 构建 + 回归门禁(注册形态/harness 守卫断言)
 ├── tests/
 │   └── test.mjs         # 8 个用例:聚合、口径过滤、静态降级、bundle 注册
-├── cordis.patch.yml     # bundle 补丁层(插入插件行)
+├── cordis.patch.yml     # bundle 补丁层(插入插件行,inject webServer)
 ├── package.json         # dsh.bundle / dsh.client 声明
 └── README.md
 ```
@@ -146,20 +152,22 @@ dsh-opencode-go-usage/
 ## 🏗️ 技术架构
 
 ```
-┌─────────────┐   host.call('ocgo-usage:fetch')   ┌─────────────┐
-│  Client 半区 │ ────────────────────────────────▶ │  Host 半区   │
-│  shell.overlay│                                 │  harness.handle│
-│  React 仪表盘 │ ◀──────────────────────────────── │  聚合 + 缓存  │
-└─────────────┘      JSON(纯数据,无 live 对象)      └──────┬──────┘
-                                                     │
-                              ┌──────────────────────┼──────────────────────┐
-                              ▼                      ▼                      ▼
-                    sessionQuery              python(只读 sqlite)       curl(官方配额)
-                    DSH 会话事件               opencode.db + cc-switch    auth.json key
-                                              (mode=ro, 零写入)          (进程内读取)
+┌─────────────┐   ① harness.handle / host.call(动态包)   ┌─────────────┐
+│  Client 半区 │ ─────────────────────────────────────▶ │  Host 半区   │
+│  shell.overlay│   ② fetch('/ocgo-usage/fetch')(bundle) │  webServer   │
+│  React 仪表盘 │ ─────────────────────────────────────▶ │  路由 + 聚合  │
+└─────────────┘         JSON(纯数据,无 live 对象)         └──────┬──────┘
+                                                             │
+                               ┌─────────────────────────────┼──────────────────────┐
+                               ▼                             ▼                      ▼
+                     sessionQuery                 python(只读 sqlite)       curl(官方配额)
+                     DSH 会话事件                  opencode.db + cc-switch    auth.json key
+                                                    (mode=ro, 零写入)          (进程内读取)
 ```
 
-- Host 半区:`harness.handle` 注册 RPC,45s 进程内缓存,三数据源并行拉取,有界并发(4)读取会话,同一时刻只跑一次全量聚合
+- Host 半区:动态模式走 `harness.handle` 私有 RPC;bundle 模式走 `webServer` 本地路由
+  (`/ocgo-usage/fetch`,同源 fetch,两种加载形态都可用)。45s 进程内缓存,三数据源并行拉取,
+  有界并发(4)读取会话,同一时刻只跑一次全量聚合
 - Python 子进程只读打开 SQLite(`?mode=ro`);配额走 curl native TLS(代理兼容),key 在子进程内从 `auth.json` 读取,不进命令日志、不落盘
 - 构建回归门禁:`build-lib.mjs` 断言客户端注册形态、工厂 `require('react')`、host 无裸 `harness` 引用
 
