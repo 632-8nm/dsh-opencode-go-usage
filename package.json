@@ -19,7 +19,7 @@
     }
   },
   "scripts": {
-    "typecheck": "node --check src/host.js && node --check src/client.js"
+    "typecheck": "node -e \"new Function(require('fs').readFileSync('src/host.js','utf8'));new Function(require('fs').readFileSync('src/client.js','utf8'));console.log('ok')\""
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=0.1.0"

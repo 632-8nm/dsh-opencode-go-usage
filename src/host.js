@@ -7,9 +7,10 @@
 //   1. DSH 会话事件  (assistant/message 携带真实 token usage + 模型/provider)
 //   2. opencode 官方库 (part 表 step-finish 逐请求记录,含官方 cost)
 //   3. codex 代理日志 (cc-switch proxy_request_logs,Go key 流量)
-//   4. 官方配额接口 (opencode.ai/zen/go/v1/usage,curl native TLS)
+//   4. 官方配额接口 (opencode.ai/zen/go/v1/usage,curl + python 双通道)
 //
 // 安全:API key 只在 python/curl 子进程内从 auth.json 读取,不进命令日志、不落盘。
+// 弹性:数据源缺失自动降级(OPENCODE_DATA 优先,各源独立可用性检测)。
 return {
   apply(ctx) {
     const shell = ctx.get('shell')
@@ -38,6 +39,17 @@ return {
       if (!p) return null
       return r4(((r.inputTokens || 0) * p.in + (r.outputTokens || 0) * p.out + (r.cacheReadTokens || 0) * p.cr + (r.cacheWriteTokens || 0) * p.cw) / 1e6)
     }
+    // 费用分项(仅估算行可拆分;官方 cost 行返回 null)
+    const splitCost = (r) => {
+      const p = PRICING[normModel(r.model)]
+      if (!p || typeof r.costOfficial === 'number') return null
+      return {
+        in: r4((r.inputTokens || 0) * p.in / 1e6),
+        out: r4((r.outputTokens || 0) * p.out / 1e6),
+        cr: r4((r.cacheReadTokens || 0) * p.cr / 1e6),
+        cw: r4((r.cacheWriteTokens || 0) * p.cw / 1e6),
+      }
+    }
     const dayKey = (ms) => {
       const d = new Date(ms)
       const p = (n) => String(n).padStart(2, '0')
@@ -61,7 +73,7 @@ return {
       return out
     }
 
-    // --- 数据源 1:DSH 会话事件(任何 provider 通用,模型/provider 从事件 source 取) ---
+    // --- 数据源 1:DSH 会话事件(任何 provider 通用) ---
     async function collectDsh() {
       const out = []
       const sessions = await sq.listSessions()
@@ -101,11 +113,12 @@ return {
       return out
     }
 
-    // --- 数据源 2+3:opencode 官方逐请求记录 + codex 代理日志(python 只读 sqlite) ---
+    // --- 数据源 2+3:opencode 官方逐请求 + codex 代理日志(只读 sqlite,弹性降级) ---
     const PY_SCRIPT = [
       'import sqlite3, json, os',
       'HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or r"C:\\Users\\Xenia"',
-      'DB = os.path.join(HOME, ".local", "share", "opencode", "opencode.db")',
+      'DATA = os.environ.get("OPENCODE_DATA") or os.path.join(HOME, ".local", "share", "opencode")',
+      'DB = os.path.join(DATA, "opencode.db")',
       'CCDB = os.path.join(HOME, ".cc-switch", "cc-switch.db")',
       'def mid(raw):',
       '    if not raw: return "unknown"',
@@ -117,9 +130,12 @@ return {
       '    except Exception: return "unknown"',
       'rows = []',
       'codex_rows = []',
-      'err = None',
+      'ocgo_avail = False',
+      'ocgo_err = None',
+      'codex_avail = False',
       'codex_err = None',
       'try:',
+      '    if not os.path.exists(DB): raise FileNotFoundError("not found: " + DB)',
       '    con = sqlite3.connect("file:" + DB.replace(chr(92), "/") + "?mode=ro", uri=True)',
       '    cur = con.cursor()',
       '    cur.execute("SELECT p.session_id, p.time_created, p.data, s.model, s.title FROM part p JOIN session s ON s.id = p.session_id WHERE p.data LIKE \'%step-finish%\'")',
@@ -134,9 +150,11 @@ return {
       '        cache = tok.get("cache") or {}',
       '        rows.append({"id": "oc-" + str(i), "title": title or None, "model": mid(model), "provider": "opencode", "time": t or 0, "inputTokens": tok.get("input") or 0, "outputTokens": tok.get("output") or 0, "reasoningTokens": tok.get("reasoning") or 0, "cacheReadTokens": cache.get("read") or 0, "cacheWriteTokens": cache.get("write") or 0, "costOfficial": obj.get("cost")})',
       '    con.close()',
+      '    ocgo_avail = True',
       'except Exception as e:',
-      '    err = "DB=" + DB + " exists=" + str(os.path.exists(DB)) + " " + repr(e)',
+      '    ocgo_err = "DB=" + DB + " " + repr(e)[:200]',
       'try:',
+      '    if not os.path.exists(CCDB): raise FileNotFoundError("not found: " + CCDB)',
       '    con2 = sqlite3.connect("file:" + CCDB.replace(chr(92), "/") + "?mode=ro", uri=True)',
       '    cur2 = con2.cursor()',
       '    cur2.execute("SELECT model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_cost_usd, created_at FROM proxy_request_logs WHERE app_type = \'codex\'")',
@@ -147,29 +165,12 @@ return {
       '            cost = 0',
       '        codex_rows.append({"id": "cx-" + str(i), "title": "Codex 会话", "model": r[0] or "unknown", "provider": "codex", "time": (r[6] or 0) * 1000, "inputTokens": r[1] or 0, "outputTokens": r[2] or 0, "reasoningTokens": 0, "cacheReadTokens": r[3] or 0, "cacheWriteTokens": r[4] or 0, "costOfficial": cost})',
       '    con2.close()',
+      '    codex_avail = True',
       'except Exception as e:',
-      '    codex_err = "CCDB=" + CCDB + " " + repr(e)',
-      'print(json.dumps({"rows": rows, "codexRows": codex_rows, "error": err, "codexError": codex_err}))',
+      '    codex_err = "CCDB=" + CCDB + " " + repr(e)[:200]',
+      'print(json.dumps({"rows": rows, "codexRows": codex_rows, "ocgoAvailable": ocgo_avail, "ocgoError": ocgo_err, "codexAvailable": codex_avail, "codexError": codex_err}))',
     ].join('\n')
     const PY_PAYLOAD = btoa(PY_SCRIPT)
-
-    async function collectDb() {
-      const cmd = "$py='E:\\python\\python.exe';if(-not(Test-Path $py)){$c=Get-Command python -ErrorAction SilentlyContinue;if($c){$py=$c.Source}else{Write-Error 'python-not-found';exit 1}}; & $py -c \"import base64;exec(base64.b64decode('" + PY_PAYLOAD + "'))\""
-      const spec = shell.resolve({ command: cmd, timeoutMs: 30000, stdoutMaxBytes: 16 * 1024 * 1024 })
-      const result = await shell.run(spec)
-      if (result.exitCode !== 0) {
-        const raw = result.stderr
-        return { rows: [], codexRows: [], error: String(typeof raw === 'string' ? raw : (raw && raw.text != null ? raw.text : raw || '')).slice(0, 300), codexError: null }
-      }
-      const raw = result.stdout
-      const text = typeof raw === 'string' ? raw : (raw && raw.text != null ? String(raw.text) : '')
-      try {
-        const parsed = JSON.parse(text)
-        return { rows: parsed.rows || [], codexRows: parsed.codexRows || [], error: parsed.error || null, codexError: parsed.codexError || null }
-      } catch (e) {
-        return { rows: [], codexRows: [], error: 'parse: ' + String(e && e.message || e), codexError: null }
-      }
-    }
 
     // --- 数据源 4:官方配额(双通道容错:curl native TLS 优先,python urllib 兜底) ---
     const QUOTA_PY = [
@@ -225,7 +226,25 @@ return {
       return { error: 'curl+py 均失败: ' + String(c1.stderr || c2.stderr || '').slice(0, 200) }
     }
 
-    // --- 聚合视图:今日/本月/累计、按模型、按天、最近会话 ---
+    async function collectDb() {
+      const cmd = "$py='E:\\python\\python.exe';if(-not(Test-Path $py)){$c=Get-Command python -ErrorAction SilentlyContinue;if($c){$py=$c.Source}else{Write-Error 'python-not-found';exit 1}}; & $py -c \"import base64;exec(base64.b64decode('" + PY_PAYLOAD + "'))\""
+      const spec = shell.resolve({ command: cmd, timeoutMs: 30000, stdoutMaxBytes: 16 * 1024 * 1024 })
+      const result = await shell.run(spec)
+      if (result.exitCode !== 0) {
+        const raw = result.stderr
+        return { rows: [], codexRows: [], ocgoAvailable: false, ocgoError: String(typeof raw === 'string' ? raw : (raw && raw.text != null ? raw.text : raw || '')).slice(0, 300), codexAvailable: false, codexError: null }
+      }
+      const raw = result.stdout
+      const text = typeof raw === 'string' ? raw : (raw && raw.text != null ? String(raw.text) : '')
+      try {
+        const parsed = JSON.parse(text)
+        return { rows: parsed.rows || [], codexRows: parsed.codexRows || [], ocgoAvailable: !!parsed.ocgoAvailable, ocgoError: parsed.ocgoError || null, codexAvailable: !!parsed.codexAvailable, codexError: parsed.codexError || null }
+      } catch (e) {
+        return { rows: [], codexRows: [], ocgoAvailable: false, ocgoError: 'parse: ' + String(e && e.message || e), codexAvailable: false, codexError: null }
+      }
+    }
+
+    // --- 聚合视图:今日/本月/累计、按模型(含分项)、按来源、按天、最近会话 ---
     function buildView(rows) {
       const todayKey = dayKey(Date.now())
       const monthPrefix = todayKey.slice(0, 7)
@@ -246,9 +265,10 @@ return {
       const byModel = {}
       const byDay = {}
       const bySession = {}
+      const byProvider = {}
       for (const r of rows) {
         const key = normModel(r.model)
-        const m = byModel[key] || (byModel[key] = { model: key, requests: 0, cost_est: 0, tokens_in: 0, tokens_out: 0, tokens_cr: 0, tokens_cw: 0, providers: {} })
+        const m = byModel[key] || (byModel[key] = { model: key, requests: 0, cost_est: 0, cost_in: null, cost_out: null, cost_cr: null, cost_cw: null, tokens_in: 0, tokens_out: 0, tokens_cr: 0, tokens_cw: 0, providers: {} })
         m.requests++
         m.tokens_in += r.inputTokens
         m.tokens_out += r.outputTokens
@@ -257,6 +277,16 @@ return {
         m.providers[r.provider || 'unknown'] = (m.providers[r.provider || 'unknown'] || 0) + 1
         const c = costOf(r)
         if (c != null) { m.cost_est += c }
+        const sp = splitCost(r)
+        if (sp) {
+          m.cost_in = (m.cost_in || 0) + sp.in
+          m.cost_out = (m.cost_out || 0) + sp.out
+          m.cost_cr = (m.cost_cr || 0) + sp.cr
+          m.cost_cw = (m.cost_cw || 0) + sp.cw
+        }
+        const pv = byProvider[r.provider || 'unknown'] || (byProvider[r.provider || 'unknown'] = { provider: r.provider || 'unknown', requests: 0, cost_est: 0 })
+        pv.requests++
+        if (c != null) pv.cost_est += c
         const dk = dayKey(r.time)
         const dd = byDay[dk] || (byDay[dk] = { cost_est: 0, requests: 0 })
         dd.cost_est += c != null ? c : 0
@@ -269,7 +299,8 @@ return {
       }
       const todayRows = rows.filter((r) => dayKey(r.time) === todayKey)
       const monthRows = rows.filter((r) => dayKey(r.time).slice(0, 7) === monthPrefix)
-      const modelList = Object.keys(byModel).map((k) => ({ model: byModel[k].model, requests: byModel[k].requests, cost_est: r4(byModel[k].cost_est), tokens_in: byModel[k].tokens_in, tokens_out: byModel[k].tokens_out, tokens_cr: byModel[k].tokens_cr, tokens_cw: byModel[k].tokens_cw, providers: Object.keys(byModel[k].providers) })).sort((a, b) => b.cost_est - a.cost_est)
+      const modelList = Object.keys(byModel).map((k) => ({ model: byModel[k].model, requests: byModel[k].requests, cost_est: r4(byModel[k].cost_est), cost_in: byModel[k].cost_in, cost_out: byModel[k].cost_out, cost_cr: byModel[k].cost_cr, cost_cw: byModel[k].cost_cw, tokens_in: byModel[k].tokens_in, tokens_out: byModel[k].tokens_out, tokens_cr: byModel[k].tokens_cr, tokens_cw: byModel[k].tokens_cw, providers: Object.keys(byModel[k].providers) })).sort((a, b) => b.cost_est - a.cost_est)
+      const providerList = Object.keys(byProvider).map((k) => ({ provider: byProvider[k].provider, requests: byProvider[k].requests, cost_est: r4(byProvider[k].cost_est) })).sort((a, b) => b.cost_est - a.cost_est)
       const dayList = []
       const d0 = new Date()
       for (let i = 29; i >= 0; i--) {
@@ -278,7 +309,7 @@ return {
         dayList.push({ date: k, cost_est: r4(byDay[k] ? byDay[k].cost_est : 0), requests: byDay[k] ? byDay[k].requests : 0 })
       }
       const recent = Object.keys(bySession).map((k) => bySession[k]).sort((a, b) => b.updated - a.updated).slice(0, 8).map((s) => ({ id: s.id, cost_est: r4(s.cost_est), updated: s.updated, title: s.title || null }))
-      return { today: agg(todayRows), month: agg(monthRows), total: agg(rows), by_model: modelList, by_day: dayList, recent }
+      return { today: agg(todayRows), month: agg(monthRows), total: agg(rows), by_model: modelList, by_provider: providerList, by_day: dayList, recent }
     }
 
     async function fetchAll() {
@@ -288,7 +319,7 @@ return {
       const quota = await collectQuota()
       const dsh = buildView(dshRows)
       const all = buildView(dshRows.concat(db.rows, db.codexRows))
-      const data = { ok: true, fetchedAt: Date.now(), quota: quota.error ? null : quota, quotaError: quota.error || null, dsh, all, ocgoError: db.error, codexError: db.codexError, ocgoCount: db.rows.length + db.codexRows.length }
+      const data = { ok: true, fetchedAt: Date.now(), quota: quota.error ? null : quota, quotaError: quota.error || null, dsh, all, ocgoAvailable: db.ocgoAvailable, ocgoError: db.ocgoError, codexAvailable: db.codexAvailable, codexError: db.codexError, ocgoCount: db.rows.length + db.codexRows.length }
       cache = { at: Date.now(), data }
       return data
     }

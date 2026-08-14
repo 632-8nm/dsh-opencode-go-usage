@@ -3,6 +3,7 @@
 // 用法:把本文件内容作为 cordis_define 的 code.client 传入(函数体)。
 // 注册到 shell.overlay:右下角可拖动 FAB 胶囊 + 可拖拽/缩放/最大化的悬浮仪表盘。
 // 数据经 host.call('ocgo-usage:fetch') 获取,60s 自动刷新,打开面板时立即刷新。
+// 面板位置/大小/FAB 位置通过 localStorage 持久化。
 return {
   apply(ctx) {
     const slots = ctx.get('slots')
@@ -11,9 +12,11 @@ return {
 
     styles.insert(`
 @keyframes ocgo-in { from { opacity: 0; transform: scale(.97) translateY(4px); } to { opacity: 1; transform: none; } }
-.ocgo-fab { position: fixed; right: 16px; bottom: 84px; z-index: 9999; display: flex; align-items: center; gap: 6px; padding: 8px 14px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 999px; cursor: grab; user-select: none; font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-primary); background: linear-gradient(135deg, color-mix(in srgb, var(--dsw-alias-brand-primary) 22%, transparent), transparent), var(--dsw-alias-bg-overlay); box-shadow: 0 4px 16px rgba(0,0,0,.18); white-space: nowrap; transition: filter .15s ease; }
+.ocgo-fab { position: fixed; right: 16px; bottom: 84px; z-index: 9999; display: flex; align-items: center; gap: 6px; padding: 8px 14px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 999px; cursor: grab; user-select: none; font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-primary); background: linear-gradient(135deg, color-mix(in srgb, var(--dsw-alias-brand-primary) 22%, transparent), transparent), var(--dsw-alias-bg-overlay); box-shadow: 0 4px 16px rgba(0,0,0,.18); white-space: nowrap; transition: filter .15s ease, border-color .3s ease, background .3s ease; }
 .ocgo-fab:hover { filter: brightness(1.12); }
 .ocgo-fab:active { cursor: grabbing; }
+.ocgo-fab.ocgo-warn-mid { border-color: var(--dsw-alias-state-warn-primary); }
+.ocgo-fab.ocgo-warn-hi { border-color: var(--dsw-alias-state-error-primary); background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 14%, transparent), var(--dsw-alias-bg-overlay); }
 .ocgo-fab .ocgo-fab-sub { font-weight: 500; font-size: 10px; opacity: .8; }
 .ocgo-panel { position: fixed; z-index: 9999; display: flex; flex-direction: column; width: 400px; min-width: 300px; max-width: 92vw; height: 560px; min-height: 260px; max-height: 84vh; border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px; background: var(--dsw-alias-bg-base); box-shadow: 0 12px 48px rgba(0,0,0,.32); overflow: hidden; animation: ocgo-in .16s ease; }
 .ocgo-panel.ocgo-max { left: 8px; top: 8px; right: 8px; bottom: 8px; width: auto; height: auto; max-width: none; max-height: none; }
@@ -27,6 +30,9 @@ return {
 .ocgo-seg { display: flex; border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; overflow: hidden; }
 .ocgo-seg-btn { background: none; border: none; cursor: pointer; padding: 4px 12px; font-size: 12px; color: var(--dsw-alias-label-secondary); transition: background .15s ease; }
 .ocgo-seg-btn.on { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 22%, transparent); color: var(--dsw-alias-label-primary); font-weight: 600; }
+.ocgo-src { font-size: 10px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--dsw-alias-border-l1); }
+.ocgo-src.ok { color: var(--dsw-alias-state-success-primary); }
+.ocgo-src.miss { color: var(--dsw-alias-label-secondary); opacity: .6; }
 .ocgo-stats { display: flex; gap: 8px; }
 .ocgo-stat { flex: 1; display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--dsw-alias-border-l1); background: linear-gradient(160deg, color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent), transparent 70%), var(--dsw-alias-bg-layer-1); }
 .ocgo-stat-label { font-size: 10px; color: var(--dsw-alias-label-secondary); }
@@ -40,12 +46,19 @@ return {
 .ocgo-donut-time { font-size: 9px; color: var(--dsw-alias-label-secondary); }
 .ocgo-panel2 { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-1); }
 .ocgo-ptitle { font-size: 10px; font-weight: 700; color: var(--dsw-alias-label-secondary); text-transform: uppercase; letter-spacing: .06em; }
-.ocgo-mrow { display: flex; align-items: center; gap: 8px; }
+.ocgo-mrow { display: flex; align-items: center; gap: 8px; cursor: pointer; border-radius: 6px; padding: 2px 4px; }
+.ocgo-mrow:hover { background: var(--dsw-alias-bg-layer-2); }
 .ocgo-mname { width: 120px; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-primary); font-size: 11px; }
 .ocgo-mbar { flex: 1; height: 8px; border-radius: 4px; background: var(--dsw-alias-bg-layer-2); overflow: hidden; }
 .ocgo-mbar-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, color-mix(in srgb, var(--dsw-alias-brand-primary) 50%, transparent), var(--dsw-alias-brand-primary)); }
 .ocgo-mreq { width: 58px; flex: none; text-align: right; color: var(--dsw-alias-label-secondary); font-size: 10px; }
 .ocgo-mcost { width: 66px; flex: none; text-align: right; font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-primary); font-weight: 600; font-size: 11px; }
+.ocgo-mdetail { display: flex; flex-direction: column; gap: 2px; padding: 4px 6px 6px 6px; font-size: 10px; color: var(--dsw-alias-label-secondary); border-left: 2px solid var(--dsw-alias-border-l2); margin-left: 4px; }
+.ocgo-prow { display: flex; align-items: center; gap: 8px; }
+.ocgo-pname { width: 84px; flex: none; color: var(--dsw-alias-label-primary); font-size: 11px; }
+.ocgo-pbar { flex: 1; height: 8px; border-radius: 4px; background: var(--dsw-alias-bg-layer-2); overflow: hidden; }
+.ocgo-pbar-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, color-mix(in srgb, var(--dsw-alias-brand-primary) 40%, transparent), var(--dsw-alias-brand-primary)); }
+.ocgo-pcost { width: 66px; flex: none; text-align: right; font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-primary); font-weight: 600; font-size: 11px; }
 .ocgo-days { display: flex; align-items: flex-end; gap: 4px; height: 76px; padding-top: 4px; }
 .ocgo-day { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 2px; height: 100%; }
 .ocgo-day-fill { width: 100%; max-width: 20px; border-radius: 3px 3px 0 0; background: linear-gradient(180deg, color-mix(in srgb, var(--dsw-alias-brand-primary) 25%, transparent), var(--dsw-alias-brand-primary)); transition: height .3s ease; }
@@ -65,6 +78,23 @@ return {
 .ocgo-resize::before { width: 9px; height: 9px; opacity: .3; }
 .ocgo-resize::after { width: 5px; height: 5px; opacity: .6; }
 `)
+
+    const LS_KEY = 'ocgo-panel-state-v1'
+    function loadState() {
+      try {
+        const raw = window.localStorage.getItem(LS_KEY)
+        if (raw) {
+          const s = JSON.parse(raw)
+          if (s && typeof s === 'object') return s
+        }
+      } catch (e) { /* storage unavailable */ }
+      return null
+    }
+    function saveState(state) {
+      try {
+        window.localStorage.setItem(LS_KEY, JSON.stringify(state))
+      } catch (e) { /* storage unavailable */ }
+    }
 
     function fmtUsd(v) {
       if (v == null) return '—'
@@ -115,17 +145,22 @@ return {
     }
 
     function UsagePanel() {
+      const saved = loadState()
       const [state, setState] = React.useState({ loading: true, data: null, error: null })
       const [view, setView] = React.useState('all')
       const [days, setDays] = React.useState(14)
       const [open, setOpen] = React.useState(false)
-      const [pos, setPos] = React.useState(null)
-      const [size, setSize] = React.useState(null)
-      const [maximized, setMaximized] = React.useState(false)
-      const [saved, setSaved] = React.useState(null)
-      const [fabPos, setFabPos] = React.useState(null)
+      const [pos, setPos] = React.useState(saved ? saved.pos || null : null)
+      const [size, setSize] = React.useState(saved ? saved.size || null : null)
+      const [maximized, setMaximized] = React.useState(saved ? !!saved.maximized : false)
+      const [fabPos, setFabPos] = React.useState(saved ? saved.fabPos || null : null)
+      const [expModel, setExpModel] = React.useState(null)
       const [stamp, setStamp] = React.useState(0)
       const [tick, setTick] = React.useState(0)
+
+      React.useEffect(() => {
+        saveState({ pos, size, fabPos, maximized })
+      }, [pos, size, fabPos, maximized])
 
       React.useEffect(() => {
         let alive = true
@@ -152,13 +187,7 @@ return {
       function reload() { setState({ loading: true, data: null, error: null }); setTick((t) => t + 1) }
 
       function toggleMax() {
-        if (!maximized) {
-          setSaved({ size, pos })
-          setMaximized(true)
-        } else {
-          setMaximized(false)
-          if (saved) { setSize(saved.size); setPos(saved.pos) }
-        }
+        setMaximized(!maximized)
       }
 
       function onTitleDown(e) {
@@ -213,7 +242,6 @@ return {
             const x = Math.max(8, Math.min(rect.left, window.innerWidth - w - 8))
             const y = Math.max(8, Math.min(rect.top, window.innerHeight - h - 8))
             setPos({ x, y })
-            setSize(null)
             setMaximized(false)
             setOpen(true)
           }
@@ -231,6 +259,7 @@ return {
         (qz && qz.weekly ? ' · 周 ' + qz.weekly.percent + '%' : '') +
         (qz && qz.monthly ? ' · 月 ' + qz.monthly.percent + '%' : '') +
         ' (拖动移动,点击打开)'
+      const fabWarn = rollPct != null && rollPct >= 90 ? ' ocgo-warn-hi' : (rollPct != null && rollPct >= 70 ? ' ocgo-warn-mid' : '')
 
       const fabStyle = {}
       if (fabPos) { fabStyle.left = fabPos.x; fabStyle.top = fabPos.y; fabStyle.right = 'auto'; fabStyle.bottom = 'auto' }
@@ -243,16 +272,16 @@ return {
 
       if (state.loading && !d) {
         return React.createElement('div', null,
-          React.createElement('button', { className: 'ocgo-fab', style: fabStyle, onMouseDown: onFabDown, title: 'OpenCode Go 用量(拖动可移动,点击打开)' }, 'OpenCode Go 加载中…')
+          React.createElement('button', { className: 'ocgo-fab' + fabWarn, style: fabStyle, onMouseDown: onFabDown, title: fabTitle }, 'OpenCode Go 加载中…')
         )
       }
       if (state.error && !d) {
         return React.createElement('div', null,
-          React.createElement('button', { className: 'ocgo-fab', style: fabStyle, onMouseDown: onFabDown, title: state.error }, 'OpenCode Go 重试')
+          React.createElement('button', { className: 'ocgo-fab' + fabWarn, style: fabStyle, onMouseDown: onFabDown, title: state.error }, 'OpenCode Go 重试')
         )
       }
 
-      const fab = React.createElement('button', { className: 'ocgo-fab', style: fabStyle, onMouseDown: onFabDown, title: 'OpenCode Go 用量(拖动可移动,点击打开)' },
+      const fab = React.createElement('button', { className: 'ocgo-fab' + fabWarn, style: fabStyle, onMouseDown: onFabDown, title: fabTitle },
         React.createElement('span', null, 'OpenCode Go'),
         total ? React.createElement('span', { style: { fontWeight: 800 } }, fmtUsd(total.cost_est)) : null,
         rollPct != null ? React.createElement('span', { className: 'ocgo-fab-sub' }, '滚动 ' + rollPct + '%') : null
@@ -275,6 +304,13 @@ return {
           ),
           React.createElement('span', { className: 'ocgo-spacer' })
         ))
+        body.push(React.createElement('div', { key: 'srcs', className: 'ocgo-viewrow' },
+          React.createElement('span', { className: 'ocgo-ptitle' }, '数据源'),
+          React.createElement('span', { className: 'ocgo-src ok' }, 'DSH'),
+          React.createElement('span', { className: 'ocgo-src ' + (d.ocgoAvailable ? 'ok' : 'miss'), title: d.ocgoError || '' }, 'opencode'),
+          React.createElement('span', { className: 'ocgo-src ' + (d.codexAvailable ? 'ok' : 'miss'), title: d.codexError || '' }, 'codex'),
+          React.createElement('span', { className: 'ocgo-src ' + (d.quota && !d.quotaError ? 'ok' : 'miss'), title: d.quotaError || '' }, '配额 API')
+        ))
         body.push(React.createElement('div', { key: 'stats', className: 'ocgo-stats' },
           React.createElement(Stat, { label: '今日', value: fmtUsd(vd.today.cost_est), sub: vd.today.requests + ' 次 · ' + fmtTokens(vd.today.tokens_input + vd.today.tokens_output) + ' tok' }),
           React.createElement(Stat, { label: '本月', value: fmtUsd(vd.month.cost_est), sub: vd.month.requests + ' 次 · ' + fmtTokens(vd.month.tokens_input + vd.month.tokens_output) + ' tok' }),
@@ -294,17 +330,44 @@ return {
             React.createElement('div', null, '配额查询失败: ' + d.quotaError)
           ))
         }
+        if (vd.by_provider && vd.by_provider.length > 1) {
+          const maxP = Math.max.apply(null, vd.by_provider.map((p) => p.cost_est)) || 1
+          body.push(React.createElement('div', { key: 'provs', className: 'ocgo-panel2' },
+            React.createElement('div', { className: 'ocgo-ptitle' }, '按来源'),
+            vd.by_provider.map((p) => React.createElement('div', { key: p.provider, className: 'ocgo-prow', title: p.provider + ' · ' + p.requests + ' 次' },
+              React.createElement('span', { className: 'ocgo-pname' }, p.provider),
+              React.createElement('div', { className: 'ocgo-pbar' },
+                React.createElement('div', { className: 'ocgo-pbar-fill', style: { width: Math.max(2, (p.cost_est / maxP) * 100) + '%' } })),
+              React.createElement('span', { className: 'ocgo-pcost' }, fmtUsd(p.cost_est))
+            ))
+          ))
+        }
         if (vd.by_model && vd.by_model.length) {
           const maxC = Math.max.apply(null, vd.by_model.map((m) => m.cost_est)) || 1
-          body.push(React.createElement('div', { key: 'models', className: 'ocgo-panel2' },
-            React.createElement('div', { className: 'ocgo-ptitle' }, '按模型 · 共 ' + vd.by_model.length + ' 个'),
-            vd.by_model.map((m) => React.createElement('div', { key: m.model, className: 'ocgo-mrow', title: (m.model || '') + '\n来源: ' + (m.providers || []).join(' / ') + '\n' + fmtTokens(m.tokens_in || 0) + ' in / ' + fmtTokens(m.tokens_out || 0) + ' out\n' + fmtTokens(m.tokens_cr || 0) + ' cache 读 / ' + fmtTokens(m.tokens_cw || 0) + ' cache 写' },
+          const rows = []
+          vd.by_model.forEach((m) => {
+            const expanded = expModel === m.model
+            rows.push(React.createElement('div', { key: m.model, className: 'ocgo-mrow', onClick: () => setExpModel(expanded ? null : m.model), title: '点击查看费用分项' },
               React.createElement('span', { className: 'ocgo-mname', title: m.model }, m.model),
               React.createElement('div', { className: 'ocgo-mbar' },
                 React.createElement('div', { className: 'ocgo-mbar-fill', style: { width: Math.max(2, (m.cost_est / maxC) * 100) + '%' } })),
               React.createElement('span', { className: 'ocgo-mreq' }, m.requests + ' 次 · ' + fmtTokens((m.tokens_in || 0) + (m.tokens_out || 0))),
               React.createElement('span', { className: 'ocgo-mcost' }, fmtUsd(m.cost_est))
             ))
+            if (expanded) {
+              const hasSplit = m.cost_in != null
+              rows.push(React.createElement('div', { key: m.model + '-d', className: 'ocgo-mdetail' },
+                hasSplit
+                  ? React.createElement('span', null, '输入 ' + fmtUsd(m.cost_in) + ' · 输出 ' + fmtUsd(m.cost_out) + ' · cache 读 ' + fmtUsd(m.cost_cr) + ' · cache 写 ' + fmtUsd(m.cost_cw))
+                  : React.createElement('span', null, '金额为官方 cost(无分项)'),
+                React.createElement('span', null, fmtTokens(m.tokens_in || 0) + ' in / ' + fmtTokens(m.tokens_out || 0) + ' out · cache ' + fmtTokens(m.tokens_cr || 0) + ' 读 / ' + fmtTokens(m.tokens_cw || 0) + ' 写'),
+                React.createElement('span', null, '来源: ' + (m.providers || []).join(' / '))
+              ))
+            }
+          })
+          body.push(React.createElement('div', { key: 'models', className: 'ocgo-panel2' },
+            React.createElement('div', { className: 'ocgo-ptitle' }, '按模型 · 共 ' + vd.by_model.length + ' 个 · 点击展开分项'),
+            rows
           ))
         }
         if (vd.by_day && vd.by_day.length) {
@@ -345,10 +408,10 @@ return {
           React.createElement('span', { key: 'int' }, '60s 自动刷新')
         ]
         if (d.ocgoError) {
-          foot.push(React.createElement('span', { key: 'warn', className: 'ocgo-warn' }, 'opencode 记录读取失败: ' + d.ocgoError))
+          foot.push(React.createElement('span', { key: 'warn', className: 'ocgo-warn' }, 'opencode 记录不可用: ' + d.ocgoError))
         }
         if (d.codexError) {
-          foot.push(React.createElement('span', { key: 'warn2', className: 'ocgo-warn' }, 'codex 记录读取失败: ' + d.codexError))
+          foot.push(React.createElement('span', { key: 'warn2', className: 'ocgo-warn' }, 'codex 记录不可用: ' + d.codexError))
         }
         body.push(React.createElement('div', { key: 'foot', className: 'ocgo-foot' }, foot))
       }
