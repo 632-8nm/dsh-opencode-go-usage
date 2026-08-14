@@ -27,6 +27,7 @@
   },
   "scripts": {
     "build": "node scripts/build-lib.mjs",
+    "test": "node --test tests/test.mjs",
     "typecheck": "node -e \"new Function(require('fs').readFileSync('src/host.js','utf8'));new Function(require('fs').readFileSync('src/client.js','utf8'));console.log('ok')\""
   },
   "peerDependencies": {

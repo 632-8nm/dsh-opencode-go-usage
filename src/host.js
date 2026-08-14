@@ -1,16 +1,16 @@
-// OpenCode Go 用量面板 �?Host 半区
+// OpenCode Go 用量面板 — Host 半区
 //
-// 用法:把本文件内容作为 cordis_define �?code.host 传入(函数�?,
-// 或按 bundle 插件方式安装(�?README)�?
+// 用法:把本文件内容作为 cordis_define 的 code.host 传入(函数体),
+// 或按 bundle 插件方式安装(见 README)。
 //
 // 数据管道:
 //   1. DSH 会话事件  (assistant/message 携带真实 token usage + 模型/provider)
-//   2. opencode 官方�?(part �?step-finish 逐请求记�?含官�?cost)
+//   2. opencode 官方库 (part 表 step-finish 逐请求记录,含官方 cost)
 //   3. codex 代理日志 (cc-switch proxy_request_logs,Go key 流量)
 //   4. 官方配额接口 (opencode.ai/zen/go/v1/usage,curl + python 双通道)
 //
-// 安全:API key 只在 python/curl 子进程内�?auth.json 读取,不进命令日志、不落盘�?
-// 弹�?数据源缺失自动降�?OPENCODE_DATA 优先,各源独立可用性检�?�?
+// 安全:API key 只在 python/curl 子进程内从 auth.json 读取,不进命令日志、不落盘。
+// 弹性:数据源缺失自动降级(OPENCODE_DATA 优先,各源独立可用性检测)。
 return {
   apply(ctx) {
     const shell = ctx.get('shell')
@@ -39,7 +39,7 @@ return {
       if (!p) return null
       return r4(((r.inputTokens || 0) * p.in + (r.outputTokens || 0) * p.out + (r.cacheReadTokens || 0) * p.cr + (r.cacheWriteTokens || 0) * p.cw) / 1e6)
     }
-    // 费用分项(仅估算行可拆�?官方 cost 行返�?null)
+    // 费用分项(仅估算行可拆分;官方 cost 行返回 null)
     const splitCost = (r) => {
       const p = PRICING[normModel(r.model)]
       if (!p || typeof r.costOfficial === 'number') return null
@@ -56,10 +56,10 @@ return {
       return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
     }
 
-    // 45s 进程内缓�?面板打开�?60s 定时刷新共用一次计算�?
+    // 45s 进程内缓存:面板打开与 60s 定时刷新共用一次计算。
     let cache = null
 
-    // 有界并发读取全部会话(默认 4 并发)�?
+    // 有界并发读取全部会话(默认 4 并发)。
     async function mapLimit(items, limit, fn) {
       const out = new Array(items.length)
       let i = 0
@@ -73,7 +73,7 @@ return {
       return out
     }
 
-    // --- 数据�?1:DSH 会话事件(任何 provider 通用) ---
+    // --- 数据源 1:DSH 会话事件(任何 provider 通用) ---
     async function collectDsh() {
       const out = []
       const sessions = await sq.listSessions()
@@ -113,7 +113,7 @@ return {
       return out
     }
 
-    // --- 数据�?2+3:opencode 官方逐请�?+ codex 代理日志(只读 sqlite,弹性降�? ---
+    // --- 数据源 2+3:opencode 官方逐请求 + codex 代理日志(只读 sqlite,弹性降级) ---
     const PY_SCRIPT = [
       'import sqlite3, json, os',
       'HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or r"C:\\Users\\Xenia"',
@@ -170,9 +170,19 @@ return {
       '    codex_err = "CCDB=" + CCDB + " " + repr(e)[:200]',
       'print(json.dumps({"rows": rows, "codexRows": codex_rows, "ocgoAvailable": ocgo_avail, "ocgoError": ocgo_err, "codexAvailable": codex_avail, "codexError": codex_err}))',
     ].join('\n')
-    const PY_PAYLOAD = btoa(PY_SCRIPT)
+    // UTF-8 安全的 base64.Native `btoa`(Node ≥16 的 whatwg 实现)只接受 Latin-1,
+    // 遇到 >0xFF 的字符(如 PY 脚本里的中文标题 "Codex 会话")会抛 InvalidCharacterError,
+    // 会直接打断 host 半区。先经 TextEncoder 落到 0-255 字节再编码即可稳定工作——
+    // TextEncoder 在动态沙箱与静态 Node 都是全局。
+    const utf8B64 = (s) => {
+      const bytes = new TextEncoder().encode(s)
+      let bin = ''
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+      return btoa(bin)
+    }
+    const PY_PAYLOAD = utf8B64(PY_SCRIPT)
 
-    // --- 数据�?4:官方配额(双通道容错:curl native TLS 优先,python urllib 兜底) ---
+    // --- 数据源 4:官方配额(双通道容错:curl native TLS 优先,python urllib 兜底) ---
     const QUOTA_PY = [
       'import json, os, urllib.request',
       'HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or r"C:\\Users\\Xenia"',
@@ -188,7 +198,7 @@ return {
       'except Exception as e:',
       '    print(json.dumps({"error": repr(e)[:200]}))',
     ].join('\n')
-    const QUOTA_PY_PAYLOAD = btoa(QUOTA_PY)
+    const QUOTA_PY_PAYLOAD = utf8B64(QUOTA_PY)
 
     async function collectQuota() {
       const parse = (text) => {
@@ -208,7 +218,7 @@ return {
       }
       const stdoutText = (raw) => typeof raw === 'string' ? raw : (raw && raw.text != null ? String(raw.text) : '')
 
-      // 通道 1:curl(Windows 原生 TLS,代理兼容;key �?pwsh 内读�?不进日志)
+      // 通道 1:curl(Windows 原生 TLS,代理兼容;key 在 pwsh 内读取,不进日志)
       const curlCmd = '$k=(Get-Content "$env:USERPROFILE\\.local\\share\\opencode\\auth.json" -Raw|ConvertFrom-Json).\'opencode-go\'.key; if(-not $k){Write-Error "no-key";exit 1}; curl.exe -s -m 15 -H "Authorization: Bearer $k" https://opencode.ai/zen/go/v1/usage'
       const c1 = await shell.run(shell.resolve({ command: curlCmd, timeoutMs: 20000 }))
       let c1err = null
@@ -225,7 +235,7 @@ return {
         if (!r.error) return r
         return { error: 'curl 失败(' + (c1err ? c1err : 'exit=' + c1.exitCode) + '); py 解析失败: ' + r.error }
       }
-      return { error: 'curl+py 均失�? ' + (c1err ? 'curl ' + c1err + '; ' : '') + String(c1.stderr || c2.stderr || '').slice(0, 200) }
+      return { error: 'curl+py 均失败: ' + (c1err ? 'curl ' + c1err + '; ' : '') + String(c1.stderr || c2.stderr || '').slice(0, 200) }
     }
 
     async function collectDb() {
@@ -234,8 +244,8 @@ return {
       const result = await shell.run(spec)
       const stderrText = String(typeof result.stderr === 'string' ? result.stderr : (result.stderr && result.stderr.text != null ? result.stderr.text : result.stderr || '')).slice(0, 300)
       if (result.exitCode !== 0) {
-        // 整个子进程失�?python 缺失/超时�?:opencode �?codex 两个数据源都不可�?
-        // 都要带上错误,否则客户端会�?codex 误显示为“可用但无数据”�?
+        // 整个子进程失败(python 缺失/超时等):opencode 与 codex 两个数据源都不可用,
+        // 都要带上错误,否则客户端会把 codex 误显示为“可用但无数据”。
         return { rows: [], codexRows: [], ocgoAvailable: false, ocgoError: stderrText || 'collectDb 子进程退出码 ' + result.exitCode, codexAvailable: false, codexError: stderrText || 'collectDb 子进程退出码 ' + result.exitCode }
       }
       const raw = result.stdout
@@ -249,7 +259,7 @@ return {
       }
     }
 
-    // --- 聚合视图:今日/本月/累计、按模型(含分�?、按来源、按天、最近会�?---
+    // --- 聚合视图:今日/本月/累计、按模型(含分项)、按来源、按天、最近会话 ---
     function buildView(rows) {
       const todayKey = dayKey(Date.now())
       const monthPrefix = todayKey.slice(0, 7)
@@ -317,13 +327,13 @@ return {
       return { today: agg(todayRows), month: agg(monthRows), total: agg(rows), by_model: modelList, by_provider: providerList, by_day: dayList, recent }
     }
 
-    // 并发去重:同一时刻只跑一次全量聚�?面板打开/刷新/定时轮询可能同时触发)�?
+    // 并发去重:同一时刻只跑一次全量聚合(面板打开/刷新/定时轮询可能同时触发)。
     let inflight = null
     async function fetchAll() {
       if (cache && Date.now() - cache.at < 45000) return cache.data
       if (inflight) return inflight
       inflight = (async () => {
-        // 三数据源并行(此前串行,每次刷新延迟约为三者之�?
+        // 三数据源并行(此前串行,每次刷新延迟约为三者之和)
         const [dshRows, db, quota] = await Promise.all([
           collectDsh().catch(() => []),
           collectDb(),
@@ -342,8 +352,8 @@ return {
       }
     }
 
-    // 动态模�?dcordis 沙箱)提供 `harness` 全局;静�?bundle 模式没有该桥,
-    // host 半区干净退�?客户端会显示明确的“RPC 桥不可用”提示�?
+    // 动态模式(dcordis 沙箱)提供 `harness` 全局;静态 bundle 模式没有该桥,
+    // host 半区干净退出,客户端会显示明确的“RPC 桥不可用”提示。
     const harnessApi = (typeof harness !== 'undefined' && harness) ? harness : null
     if (harnessApi && typeof harnessApi.handle === 'function') {
       ctx.effect(() => harnessApi.handle('ocgo-usage:fetch', async () => {
