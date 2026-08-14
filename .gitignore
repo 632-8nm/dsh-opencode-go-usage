@@ -1,6 +1,18 @@
+# 依赖与构建
 node_modules/
 dist/
 *.log
+
+# 系统杂项
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# 截图(占位,用户自行添加)
 docs/screenshot.png
+
+# 临时文件
+.tmp-*
+*.b64
+tmp/
+temp/
