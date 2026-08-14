@@ -375,18 +375,8 @@ return {
             React.createElement('div', null, '配额查询失败: ' + d.quotaError)
           ))
         }
-        if (vd.by_provider && vd.by_provider.length > 1) {
-          const maxP = Math.max.apply(null, vd.by_provider.map((p) => p.cost_est)) || 1
-          body.push(React.createElement('div', { key: 'provs', className: 'ocgo-panel2' },
-            React.createElement('div', { className: 'ocgo-ptitle' }, '按来源'),
-            vd.by_provider.map((p) => React.createElement('div', { key: p.provider, className: 'ocgo-prow', title: p.provider + ' · ' + p.requests + ' 次' },
-              React.createElement('span', { className: 'ocgo-pname' }, p.provider),
-              React.createElement('div', { className: 'ocgo-pbar' },
-                React.createElement('div', { className: 'ocgo-pbar-fill', style: { width: Math.max(2, (p.cost_est / maxP) * 100) + '%' } })),
-              React.createElement('span', { className: 'ocgo-pcost' }, fmtUsd(p.cost_est))
-            ))
-          ))
-        }
+        // 按来源板块已移除:与顶部"数据源"徽标重复,且 provider 命名
+        // (opencode vs opencode-go)易误导。来源信息以数据源徽标为准。
         if (vd.by_model && vd.by_model.length) {
           const maxC = Math.max.apply(null, vd.by_model.map((m) => m.cost_est)) || 1
           const rows = []
