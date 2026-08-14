@@ -31,7 +31,7 @@ return {
   "qwen3-coder-flash": { in: 0.195, out: 0.975, cr: 0.039, cw: 0.0 },
   "gemini-2.5-flash": { in: 0.3, out: 2.5, cr: 0.03, cw: 0.0 },
 }
-    const normModel = (m) => String(m || '').replace(/^deepseek-ai\//, '')
+    const normModel = (m) => String(m || '').replace(/^(deepseek-ai|opencode-go|openai|anthropic|google|mistral|cohere)\//, '')
     const r4 = (n) => Math.round(n * 10000) / 10000
     const costOf = (r) => {
       if (typeof r.costOfficial === 'number') return r.costOfficial
@@ -211,9 +211,11 @@ return {
       // 通道 1:curl(Windows 原生 TLS,代理兼容;key 在 pwsh 内读取,不进日志)
       const curlCmd = '$k=(Get-Content "$env:USERPROFILE\\.local\\share\\opencode\\auth.json" -Raw|ConvertFrom-Json).\'opencode-go\'.key; if(-not $k){Write-Error "no-key";exit 1}; curl.exe -s -m 15 -H "Authorization: Bearer $k" https://opencode.ai/zen/go/v1/usage'
       const c1 = await shell.run(shell.resolve({ command: curlCmd, timeoutMs: 20000 }))
+      let c1err = null
       if (c1.exitCode === 0) {
         const r = parse(stdoutText(c1.stdout))
         if (!r.error) return r
+        c1err = r.error
       }
       // 通道 2:python urllib 兜底
       const pyCmd = "$py='E:\\python\\python.exe';if(-not(Test-Path $py)){$c=Get-Command python -ErrorAction SilentlyContinue;if($c){$py=$c.Source}else{Write-Error 'python-not-found';exit 1}}; & $py -c \"import base64;exec(base64.b64decode('" + QUOTA_PY_PAYLOAD + "'))\""
@@ -221,9 +223,9 @@ return {
       if (c2.exitCode === 0) {
         const r = parse(stdoutText(c2.stdout))
         if (!r.error) return r
-        return { error: 'curl+py 均失败: ' + r.error }
+        return { error: 'curl 失败(' + (c1err ? c1err : 'exit=' + c1.exitCode) + '); py 解析失败: ' + r.error }
       }
-      return { error: 'curl+py 均失败: ' + String(c1.stderr || c2.stderr || '').slice(0, 200) }
+      return { error: 'curl+py 均失败: ' + (c1err ? 'curl ' + c1err + '; ' : '') + String(c1.stderr || c2.stderr || '').slice(0, 200) }
     }
 
     async function collectDb() {
@@ -312,24 +314,42 @@ return {
       return { today: agg(todayRows), month: agg(monthRows), total: agg(rows), by_model: modelList, by_provider: providerList, by_day: dayList, recent }
     }
 
+    // 并发去重:同一时刻只跑一次全量聚合(面板打开/刷新/定时轮询可能同时触发)。
+    let inflight = null
     async function fetchAll() {
       if (cache && Date.now() - cache.at < 45000) return cache.data
-      const dshRows = await collectDsh()
-      const db = await collectDb()
-      const quota = await collectQuota()
-      const dsh = buildView(dshRows)
-      const all = buildView(dshRows.concat(db.rows, db.codexRows))
-      const data = { ok: true, fetchedAt: Date.now(), quota: quota.error ? null : quota, quotaError: quota.error || null, dsh, all, ocgoAvailable: db.ocgoAvailable, ocgoError: db.ocgoError, codexAvailable: db.codexAvailable, codexError: db.codexError, ocgoCount: db.rows.length + db.codexRows.length }
-      cache = { at: Date.now(), data }
-      return data
+      if (inflight) return inflight
+      inflight = (async () => {
+        // 三数据源并行(此前串行,每次刷新延迟约为三者之和)
+        const [dshRows, db, quota] = await Promise.all([
+          collectDsh().catch(() => []),
+          collectDb(),
+          collectQuota(),
+        ])
+        const dsh = buildView(dshRows)
+        const all = buildView(dshRows.concat(db.rows, db.codexRows))
+        const data = { ok: true, fetchedAt: Date.now(), quota: quota.error ? null : quota, quotaError: quota.error || null, dsh, all, ocgoAvailable: db.ocgoAvailable, ocgoError: db.ocgoError, codexAvailable: db.codexAvailable, codexError: db.codexError }
+        cache = { at: Date.now(), data }
+        return data
+      })()
+      try {
+        return await inflight
+      } finally {
+        inflight = null
+      }
     }
 
-    ctx.effect(() => harness.handle('ocgo-usage:fetch', async () => {
-      try {
-        return await fetchAll()
-      } catch (e) {
-        return { ok: false, error: String((e && e.message) || e) }
-      }
-    }))
+    // 动态模式(dcordis 沙箱)提供 `harness` 全局;静态 bundle 模式没有该桥,
+    // host 半区干净退出,客户端会显示明确的“RPC 桥不可用”提示。
+    const harnessApi = (typeof harness !== 'undefined' && harness) ? harness : null
+    if (harnessApi && typeof harnessApi.handle === 'function') {
+      ctx.effect(() => harnessApi.handle('ocgo-usage:fetch', async () => {
+        try {
+          return await fetchAll()
+        } catch (e) {
+          return { ok: false, error: String((e && e.message) || e) }
+        }
+      }))
+    }
   }
 }

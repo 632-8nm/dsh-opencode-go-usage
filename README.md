@@ -58,7 +58,7 @@
 | 双视图 | **DSH**(仅 DSH 会话)/ **全部**(DSH + opencode 官方记录 + codex) |
 | 精确费用 | opencode 逐请求官方 cost + codex 代理记录,DSH 按公开定价估算 |
 | 配额监控 | 滚动/周/月官方配额百分比与重置时间 |
-| 自动刷新 | 60s 定时 + 打开面板即时刷新,45s Host 缓存 |
+| 自动刷新 | 面板打开时 60s 定时 + 即时刷新,关闭时不再后台轮询;45s Host 缓存 |
 
 ## 数据来源与口径
 
@@ -92,6 +92,12 @@
 
 ### 方式 B:Bundle 插件(官方安装方式)
 
+> ⚠️ **当前平台限制**:客户端↔宿主 RPC(`harness.handle` / `host.call`)是
+> DSH **动态包(dcordis)专属**能力;静态 bundle 插件没有该桥,因此**方式 B 目前
+> 无法取数** —— 面板会正常加载并弹出,但显示“host RPC 桥不可用”的明确提示。
+> 完整功能请使用方式 A(会话内动态加载)。bundle 形态保持可安装、可注册、可加载,
+> 等 DSH 开放静态插件的包私有 RPC 后即可直接启用。
+
 ```sh
 git clone https://github.com/Xenia0922/dsh-opencode-go-usage.git
 cd dsh-opencode-go-usage
@@ -101,7 +107,7 @@ dsh plugin --profile my-profile add ./dsh-opencode-go-usage
 dsh --profile my-profile
 ```
 
-`package.json` 已声明官方 bundle 字段(`dsh.bundle.patch -> cordis.patch.yml`),安装后插件行自动注册(`opencode-go-usage`)。
+`package.json` 已声明官方 bundle 字段(`dsh.bundle.patch -> cordis.patch.yml`),安装后插件行自动注册(`opencode-go-usage`)。构建产物由 `npm run build`(`scripts/build-lib.mjs`)生成:host 端为 ESM 入口(`lib/index.js`),浏览器端为符合 `window.__ModuleLoader__.load({ id, factory })` 注册协议的 bundle(`lib/client.js`)。
 
 ## 使用
 
@@ -131,7 +137,7 @@ dsh --profile my-profile
                                               (mode=ro, 零写入)          (进程内读取)
 ```
 
-- Host 半区:`harness.handle` 注册 RPC,45s 进程内缓存,有界并发(4)读取会话
+- Host 半区:`harness.handle` 注册 RPC(动态模式),45s 进程内缓存,三数据源并行拉取,有界并发(4)读取会话,同一时刻只跑一次全量聚合
 - Python 子进程只读打开 SQLite(`?mode=ro`),沙箱/代理环境下稳定
 - 配额走 curl native TLS(代理兼容),key 在 pwsh/python 进程内从 `auth.json` 读取,不经过命令字符串、不落盘
 
