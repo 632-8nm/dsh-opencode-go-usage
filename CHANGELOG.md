@@ -7,10 +7,11 @@
 ### 修复(bundle 形态随 DSH 自动加载)
 - **bundle 持久安装**:此前 `dsh plugin add` 实际未把包装进 profile(package.json 无依赖、无 node_modules),重启后插件丢失;现在通过 profile 内 `pnpm add link:` + `dsh.profile.bundles` 收录,插件随 DSH 启动自动加载
 - **bundle 取数通道**:host 半区注册 `webServer` 本地路由 `/ocgo-usage/fetch`,客户端同源 `fetch` 取数;`cordis.patch.yml` 插件行 `inject: ['webServer']` 确保服务就绪后才注册(此前 bundle 形态只能显示"RPC 桥不可用"占位)
+- **修正安装目标**:DSH 实际读取的 profile 位于 `DSH_HOME`(Windows 常见 `%APPDATA%\DeepSeek Harness\data\dsh`)而非 `~/.dsh`;此前一次 `dsh plugin add` 因路径含空格被拆成两个参数,在真实 profile 里留下了坏链接(`Opencode → link:D:/Opencode`、`dsh-opencode-go-usage → link:view\...`),现已在真实 profile 修正为正确的 `link:` 并重新链接
 - 动态方式(方式 A)与 bundle 方式(方式 B)共用同一套聚合逻辑,均可用
 
 ### 文档
-- README:方式 B 更新为"功能完整";新增 FAQ「重启后插件不见了?」;新增界面预览图 `docs/screenshot.svg`
+- README:方式 B 更新为"功能完整"并改为推荐;新增方式 C(把仓库链接丢给 AI 装);新增 FAQ「重启后插件不见了?」;新增界面预览图 `docs/screenshot.svg`
 
 ## [1.0.0] - 2026-08-14
 

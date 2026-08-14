@@ -118,6 +118,14 @@ dsh --profile my-profile
 
 `package.json` 已声明官方 bundle 字段(`dsh.bundle.patch -> cordis.patch.yml`);构建产物由 `npm run build` 生成(host ESM + 浏览器注册形态 bundle)。
 
+### 方式 C:把链接丢给 AI 装(最省事)
+
+把下面这句话复制给任意 AI(DSH 会话里的 Agent、ChatGPT 等都行),它自己会 clone、安装并告诉你重启:
+
+> 帮我安装 https://github.com/Xenia0922/dsh-opencode-go-usage 这个 DSH 插件:按仓库 README 的方式 B 装进我的 DSH profile(数据目录以 DSH_HOME 环境变量为准),装完告诉我需要重启 DSH
+
+AI 会读本 README,自己完成 clone、`pnpm add link:`、写 `dsh.profile.bundles` 等步骤——你只需要等它说"重启吧"。
+
 ## 🕹️ 使用
 
 | 操作 | 效果 |
