@@ -92,10 +92,9 @@ OpenCode Go 的限额与定价来自 [opencode.ai/docs/go](https://opencode.ai/d
 
 ### 方式 B:Bundle 插件(官方安装方式,重启后自动加载)
 
-> ⚠️ **当前平台限制**:客户端↔宿主 RPC(`harness.handle` / `host.call`)是
-> DSH **动态包(dcordis)专属**能力;静态 bundle 插件暂无该桥,**方式 B 目前无法取数**,
-> 面板会加载并显示"host RPC 桥不可用"提示。完整功能请用方式 A。
-> bundle 形态保持可安装、可注册、可加载,等 DSH 开放静态插件包私有 RPC 后直接可用。
+> host 半区注册本地 HTTP 路由(`webServer` → `/ocgo-usage/fetch`),客户端同源
+> `fetch` 取数——**bundle 形态功能完整**,且随 DSH 启动自动加载,无需每次会话重建。
+> 动态方式(方式 A)仍走 `harness.handle` / `host.call` 私有 RPC,两种形态共用同一套聚合逻辑。
 
 ```sh
 git clone https://github.com/Xenia0922/dsh-opencode-go-usage.git
@@ -106,7 +105,12 @@ dsh plugin --profile my-profile add ./dsh-opencode-go-usage
 dsh --profile my-profile
 ```
 
-`package.json` 已声明官方 bundle 字段(`dsh.bundle.patch -> cordis.patch.yml`),安装后插件行自动注册(`opencode-go-usage`);构建产物由 `npm run build` 生成(host ESM + 浏览器注册形态 bundle)。
+`dsh plugin add` 会执行 `pnpm add` 并把声明了 `dsh.bundle` 的包写进
+`dsh.profile.bundles`;bundle 的 `cordis.patch.yml` 随后插入插件行
+(`inject: ['webServer']` 等待服务就绪),host 聚合路由与客户端 UI 随 DSH
+启动自动注册。若 `dsh` CLI 不可用,可手动等价操作(见下方 FAQ)。
+
+`package.json` 已声明官方 bundle 字段(`dsh.bundle.patch -> cordis.patch.yml`);构建产物由 `npm run build` 生成(host ESM + 浏览器注册形态 bundle)。
 
 ## 🕹️ 使用
 
@@ -180,6 +184,12 @@ DSH 会话事件只有 token 没有 cost,按官方定价表估算(opencode 应�
 
 **免费模型会被计入吗?**
 不会。`*-free`(OpenCode Zen 免费)以及 deepseek 直连等非 opencode-go 流量全部被过滤。
+
+**重启后插件不见了 / 加载不起来?**
+动态方式(方式 A)是进程内定义,重启即失(设计如此)。要随 DSH 自动加载请用
+方式 B:在 profile 目录执行 `pnpm add link:<插件目录>`(或 `dsh plugin --profile <名> add <目录>`),
+并把包名追加进 profile `package.json` 的 `dsh.profile.bundles` 列表(等价于 `dsh plugin`
+的 reconcile 步骤),然后重启 DSH。重启后 host 路由与右下角 FAB 自动出现。
 
 ## 🔒 隐私
 
