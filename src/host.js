@@ -122,6 +122,9 @@ return {
     }
 
     // --- 数据源 2+3:opencode 官方逐请求 + codex 代理日志(只读 sqlite,弹性降级) ---
+    // 注意:cc-switch 的 proxy_request_logs 含 codex_session/opencode_session 直连
+    // 会话记录(data_source != 'proxy'),那是各应用官方直连流量,不属于 Go key;
+    // 只有 data_source='proxy' 的行才是真正走 cc-switch 代理 → OpenCode Go 上游。
     const PY_SCRIPT = [
       'import sqlite3, json, os',
       'HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or r"C:\\Users\\Xenia"',
@@ -165,7 +168,7 @@ return {
       '    if not os.path.exists(CCDB): raise FileNotFoundError("not found: " + CCDB)',
       '    con2 = sqlite3.connect("file:" + CCDB.replace(chr(92), "/") + "?mode=ro", uri=True)',
       '    cur2 = con2.cursor()',
-      '    cur2.execute("SELECT model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_cost_usd, created_at FROM proxy_request_logs WHERE app_type = \'codex\'")',
+      '    cur2.execute("SELECT model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_cost_usd, created_at FROM proxy_request_logs WHERE app_type = \'codex\' AND data_source = \'proxy\'")',
       '    for i, r in enumerate(cur2.fetchall()):',
       '        try:',
       '            cost = float(r[5] or 0)',
