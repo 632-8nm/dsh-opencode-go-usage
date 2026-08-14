@@ -1,0 +1,194 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="1080" viewBox="0 0 860 1080" font-family="-apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif">
+  <!-- 背景(模拟 DSH 深色界面) -->
+  <rect width="860" height="1080" fill="#131318"/>
+  <rect x="0" y="0" width="220" height="1080" fill="#18181d"/>
+  <circle cx="150" cy="60" r="14" fill="#2a2a33"/>
+  <rect x="180" y="52" width="80" height="16" rx="4" fill="#2a2a33"/>
+  <rect x="24" y="120" width="170" height="14" rx="4" fill="#2c2c36"/>
+  <rect x="24" y="150" width="140" height="14" rx="4" fill="#23232b"/>
+  <rect x="24" y="180" width="160" height="14" rx="4" fill="#23232b"/>
+  <rect x="24" y="900" width="120" height="14" rx="4" fill="#2c2c36"/>
+
+  <!-- 面板 -->
+  <g transform="translate(248 36)">
+    <rect width="580" height="1000" rx="14" fill="#1d1d23" stroke="#33333d" stroke-width="1"/>
+    <!-- 标题栏 -->
+    <rect width="580" height="44" rx="14" fill="#23232b"/>
+    <rect y="22" width="580" height="22" fill="#23232b"/>
+    <circle cx="20" cy="22" r="4" fill="#4d6bfe"/>
+    <text x="34" y="27" fill="#e8e8ec" font-size="14" font-weight="700">OpenCode Go 用量</text>
+    <g font-size="11" text-anchor="middle">
+      <rect x="430" y="10" width="38" height="24" rx="6" fill="#2c2c36"/>
+      <text x="449" y="26" fill="#b9b9c4">刷新</text>
+      <rect x="474" y="10" width="48" height="24" rx="6" fill="#2c2c36"/>
+      <text x="498" y="26" fill="#b9b9c4">最大化</text>
+      <rect x="528" y="10" width="38" height="24" rx="6" fill="#2c2c36"/>
+      <text x="547" y="26" fill="#b9b9c4">关闭</text>
+    </g>
+    <!-- 视图切换 -->
+    <g transform="translate(16 58)">
+      <rect width="96" height="26" rx="7" fill="#26262e" stroke="#33333d"/>
+      <rect width="46" height="22" x="2" y="2" rx="5" fill="#4d6bfe"/>
+      <text x="25" y="17" fill="#fff" font-size="11" font-weight="600" text-anchor="middle">DSH</text>
+      <text x="70" y="17" fill="#9a9aa6" font-size="11" text-anchor="middle">全部</text>
+      <text x="110" y="17" fill="#6b6b76" font-size="10">数据源</text>
+      <g font-size="10">
+        <rect x="158" y="3" width="40" height="20" rx="10" fill="#1d2a22" stroke="#2f5d42"/>
+        <text x="178" y="16" fill="#4cd97b" text-anchor="middle">DSH</text>
+        <rect x="204" y="3" width="62" height="20" rx="10" fill="#1d2a22" stroke="#2f5d42"/>
+        <text x="235" y="16" fill="#4cd97b" text-anchor="middle">opencode</text>
+        <rect x="272" y="3" width="46" height="20" rx="10" fill="#1d2a22" stroke="#2f5d42"/>
+        <text x="295" y="16" fill="#4cd97b" text-anchor="middle">codex</text>
+        <rect x="324" y="3" width="58" height="20" rx="10" fill="#1d2a22" stroke="#2f5d42"/>
+        <text x="353" y="16" fill="#4cd97b" text-anchor="middle">配额 API</text>
+      </g>
+    </g>
+    <!-- 统计卡 -->
+    <g transform="translate(16 96)">
+      <rect width="176" height="72" rx="10" fill="#26262e" stroke="#33333d"/>
+      <text x="14" y="20" fill="#9a9aa6" font-size="10">今日</text>
+      <text x="14" y="46" fill="#e8e8ec" font-size="21" font-weight="800">$0.78</text>
+      <text x="14" y="62" fill="#9a9aa6" font-size="9.5">654 次 · 18.3M tok</text>
+      <rect x="200" width="176" height="72" rx="10" fill="#26262e" stroke="#33333d"/>
+      <text x="214" y="20" fill="#9a9aa6" font-size="10">本月</text>
+      <text x="214" y="46" fill="#e8e8ec" font-size="21" font-weight="800">$4.97</text>
+      <text x="214" y="62" fill="#9a9aa6" font-size="9.5">3,349 次 · 61.2M tok</text>
+      <rect x="400" width="176" height="72" rx="10" fill="#26262e" stroke="#33333d"/>
+      <text x="414" y="20" fill="#9a9aa6" font-size="10">累计</text>
+      <text x="414" y="46" fill="#e8e8ec" font-size="21" font-weight="800">$5.97</text>
+      <text x="414" y="62" fill="#9a9aa6" font-size="9.5">445.2M in / 25.2M out</text>
+    </g>
+    <!-- 配额环形图 -->
+    <g transform="translate(16 182)">
+      <rect width="560" height="108" rx="10" fill="#26262e" stroke="#33333d"/>
+      <g transform="translate(40 54)">
+        <circle r="34" fill="none" stroke="#33333d" stroke-width="9"/>
+        <circle r="34" fill="none" stroke="#4cd97b" stroke-width="9" stroke-linecap="round" stroke-dasharray="21.4 213.6" transform="rotate(-90)"/>
+        <text y="6" fill="#e8e8ec" font-size="15" font-weight="800" text-anchor="middle">10%</text>
+        <text y="20" fill="#9a9aa6" font-size="9" text-anchor="middle">滚动配额</text>
+        <text y="56" fill="#9a9aa6" font-size="9" text-anchor="middle">19:53 重置</text>
+      </g>
+      <g transform="translate(220 54)">
+        <circle r="34" fill="none" stroke="#33333d" stroke-width="9"/>
+        <circle r="34" fill="none" stroke="#ffb020" stroke-width="9" stroke-linecap="round" stroke-dasharray="34.2 213.6" transform="rotate(-90)"/>
+        <text y="6" fill="#e8e8ec" font-size="15" font-weight="800" text-anchor="middle">16%</text>
+        <text y="20" fill="#9a9aa6" font-size="9" text-anchor="middle">本周</text>
+        <text y="56" fill="#9a9aa6" font-size="9" text-anchor="middle">8-17 重置</text>
+      </g>
+      <g transform="translate(400 54)">
+        <circle r="34" fill="none" stroke="#33333d" stroke-width="9"/>
+        <circle r="34" fill="none" stroke="#4cd97b" stroke-width="9" stroke-linecap="round" stroke-dasharray="17.1 213.6" transform="rotate(-90)"/>
+        <text y="6" fill="#e8e8ec" font-size="15" font-weight="800" text-anchor="middle">8%</text>
+        <text y="20" fill="#9a9aa6" font-size="9" text-anchor="middle">本月</text>
+        <text y="56" fill="#9a9aa6" font-size="9" text-anchor="middle">9-13 重置</text>
+      </g>
+    </g>
+    <!-- 按模型 -->
+    <g transform="translate(16 302)">
+      <rect width="560" height="128" rx="10" fill="#26262e" stroke="#33333d"/>
+      <text x="14" y="20" fill="#9a9aa6" font-size="10" font-weight="700">按模型 · 共 4 个 · 点击展开分项</text>
+      <g transform="translate(10 34)">
+        <text x="10" y="14" fill="#e8e8ec" font-size="11">deepseek-v4-flash</text>
+        <rect x="150" y="4" width="280" height="8" rx="4" fill="#33333d"/>
+        <rect x="150" y="4" width="252" height="8" rx="4" fill="#4d6bfe"/>
+        <text x="438" y="14" fill="#9a9aa6" font-size="10" text-anchor="end">2,664 次</text>
+        <text x="460" y="14" fill="#e8e8ec" font-size="11" font-weight="700" text-anchor="end">$4.02</text>
+      </g>
+      <g transform="translate(10 56)">
+        <text x="10" y="14" fill="#e8e8ec" font-size="11">gpt-5.6-luna</text>
+        <rect x="150" y="4" width="280" height="8" rx="4" fill="#33333d"/>
+        <rect x="150" y="4" width="22" height="8" rx="4" fill="#4d6bfe"/>
+        <text x="438" y="14" fill="#9a9aa6" font-size="10" text-anchor="end">678 次</text>
+        <text x="460" y="14" fill="#e8e8ec" font-size="11" font-weight="700" text-anchor="end">$0.06</text>
+      </g>
+      <g transform="translate(10 78)">
+        <text x="10" y="14" fill="#e8e8ec" font-size="11">glm-5.2</text>
+        <rect x="150" y="4" width="280" height="8" rx="4" fill="#33333d"/>
+        <rect x="150" y="4" width="18" height="8" rx="4" fill="#4d6bfe"/>
+        <text x="438" y="14" fill="#9a9aa6" font-size="10" text-anchor="end">4 次</text>
+        <text x="460" y="14" fill="#e8e8ec" font-size="11" font-weight="700" text-anchor="end">$0.05</text>
+      </g>
+      <g transform="translate(10 100)">
+        <text x="10" y="14" fill="#e8e8ec" font-size="11">minimax-m3</text>
+        <rect x="150" y="4" width="280" height="8" rx="4" fill="#33333d"/>
+        <rect x="150" y="4" width="14" height="8" rx="4" fill="#4d6bfe"/>
+        <text x="438" y="14" fill="#9a9aa6" font-size="10" text-anchor="end">3 次</text>
+        <text x="460" y="14" fill="#e8e8ec" font-size="11" font-weight="700" text-anchor="end">$0.03</text>
+      </g>
+    </g>
+    <!-- 花费趋势 -->
+    <g transform="translate(16 442)">
+      <rect width="560" height="190" rx="10" fill="#26262e" stroke="#33333d"/>
+      <text x="14" y="20" fill="#9a9aa6" font-size="10" font-weight="700">花费趋势</text>
+      <g font-size="10" text-anchor="middle">
+        <rect x="420" y="8" width="40" height="20" rx="6" fill="#2c2c36"/>
+        <text x="440" y="21" fill="#9a9aa6">7天</text>
+        <rect x="464" y="8" width="40" height="20" rx="6" fill="#4d6bfe"/>
+        <text x="484" y="21" fill="#fff" font-weight="600">14天</text>
+        <rect x="508" y="8" width="40" height="20" rx="6" fill="#2c2c36"/>
+        <text x="528" y="21" fill="#9a9aa6">30天</text>
+      </g>
+      <!-- 14 天柱状图 -->
+      <g transform="translate(20 130)">
+        <rect x="0" y="0" width="18" height="18" rx="3" fill="#2f3550"/>
+        <rect x="22" y="6" width="18" height="12" rx="3" fill="#2f3550"/>
+        <rect x="44" y="10" width="18" height="8" rx="3" fill="#2f3550"/>
+        <rect x="66" y="4" width="18" height="14" rx="3" fill="#2f3550"/>
+        <rect x="88" y="16" width="18" height="2" rx="3" fill="#2f3550"/>
+        <rect x="110" y="12" width="18" height="6" rx="3" fill="#2f3550"/>
+        <rect x="132" y="8" width="18" height="10" rx="3" fill="#2f3550"/>
+        <rect x="154" y="20" width="18" height="0" rx="3" fill="#2f3550"/>
+        <rect x="176" y="2" width="18" height="16" rx="3" fill="#2f3550"/>
+        <rect x="198" y="14" width="18" height="4" rx="3" fill="#2f3550"/>
+        <rect x="220" y="6" width="18" height="12" rx="3" fill="#2f3550"/>
+        <rect x="242" y="10" width="18" height="8" rx="3" fill="#2f3550"/>
+        <rect x="264" y="2" width="18" height="16" rx="3" fill="#3a4278"/>
+        <rect x="286" y="0" width="18" height="18" rx="3" fill="#4d6bfe"/>
+        <g fill="#6b6b76" font-size="8">
+          <text x="0" y="28" text-anchor="middle">08-01</text>
+          <text x="143" y="28" text-anchor="middle">08-08</text>
+          <text x="295" y="28" text-anchor="middle">08-14</text>
+        </g>
+      </g>
+    </g>
+    <!-- 最近会话 -->
+    <g transform="translate(16 644)">
+      <rect width="560" height="150" rx="10" fill="#26262e" stroke="#33333d"/>
+      <text x="14" y="20" fill="#9a9aa6" font-size="10" font-weight="700">最近会话</text>
+      <g transform="translate(14 38)" font-size="11">
+        <rect x="0" y="-8" width="530" height="1" fill="#2c2c36"/>
+        <text x="0" y="10" fill="#e8e8ec">修复数据口径与部署验证</text>
+        <text x="452" y="10" fill="#9a9aa6" font-size="10">08-14 22:41</text>
+        <text x="528" y="10" fill="#e8e8ec" font-weight="700" text-anchor="end">$2.13</text>
+        <rect x="0" y="30" width="530" height="1" fill="#2c2c36"/>
+        <text x="0" y="48" fill="#e8e8ec">codex 会话 · 昨天</text>
+        <text x="452" y="48" fill="#9a9aa6" font-size="10">08-13 22:37</text>
+        <text x="528" y="48" fill="#e8e8ec" font-weight="700" text-anchor="end">$2.39</text>
+        <rect x="0" y="68" width="530" height="1" fill="#2c2c36"/>
+        <text x="0" y="86" fill="#e8e8ec">opencode 应用 · 阅读项目</text>
+        <text x="452" y="86" fill="#9a9aa6" font-size="10">08-14 14:01</text>
+        <text x="528" y="86" fill="#e8e8ec" font-weight="700" text-anchor="end">$0.78</text>
+      </g>
+    </g>
+    <!-- 脚注 -->
+    <g transform="translate(16 806)">
+      <text fill="#6b6b76" font-size="9">DSH(opencode-go) + opencode 官方记录 + codex(Go key) · 金额: 官方 cost + 官方定价估算 · 更新 22:41 · 60s 自动刷新</text>
+    </g>
+  </g>
+
+  <!-- FAB 胶囊 -->
+  <g transform="translate(660 992)">
+    <rect width="176" height="40" rx="20" fill="#23232b" stroke="#33333d" stroke-width="1"/>
+    <rect x="1" y="1" width="174" height="38" rx="19" fill="url(#fabg)"/>
+    <circle cx="20" cy="20" r="4" fill="#4d6bfe"/>
+    <text x="34" y="24" fill="#e8e8ec" font-size="12" font-weight="600">OpenCode Go</text>
+    <text x="118" y="24" fill="#e8e8ec" font-size="12" font-weight="800">$5.97</text>
+    <text x="158" y="24" fill="#9a9aa6" font-size="10">· 10%</text>
+  </g>
+  <defs>
+    <linearGradient id="fabg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#26262e"/>
+      <stop offset="1" stop-color="#1d1d23"/>
+    </linearGradient>
+  </defs>
+</svg>
