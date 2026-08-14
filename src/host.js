@@ -232,9 +232,11 @@ return {
       const cmd = "$py='E:\\python\\python.exe';if(-not(Test-Path $py)){$c=Get-Command python -ErrorAction SilentlyContinue;if($c){$py=$c.Source}else{Write-Error 'python-not-found';exit 1}}; & $py -c \"import base64;exec(base64.b64decode('" + PY_PAYLOAD + "'))\""
       const spec = shell.resolve({ command: cmd, timeoutMs: 30000, stdoutMaxBytes: 16 * 1024 * 1024 })
       const result = await shell.run(spec)
+      const stderrText = String(typeof result.stderr === 'string' ? result.stderr : (result.stderr && result.stderr.text != null ? result.stderr.text : result.stderr || '')).slice(0, 300)
       if (result.exitCode !== 0) {
-        const raw = result.stderr
-        return { rows: [], codexRows: [], ocgoAvailable: false, ocgoError: String(typeof raw === 'string' ? raw : (raw && raw.text != null ? raw.text : raw || '')).slice(0, 300), codexAvailable: false, codexError: null }
+        // 整个子进程失败(python 缺失/超时等):opencode 与 codex 两个数据源都不可用,
+        // 都要带上错误,否则客户端会把 codex 误显示为“可用但无数据”。
+        return { rows: [], codexRows: [], ocgoAvailable: false, ocgoError: stderrText || 'collectDb 子进程退出码 ' + result.exitCode, codexAvailable: false, codexError: stderrText || 'collectDb 子进程退出码 ' + result.exitCode }
       }
       const raw = result.stdout
       const text = typeof raw === 'string' ? raw : (raw && raw.text != null ? String(raw.text) : '')
@@ -242,7 +244,8 @@ return {
         const parsed = JSON.parse(text)
         return { rows: parsed.rows || [], codexRows: parsed.codexRows || [], ocgoAvailable: !!parsed.ocgoAvailable, ocgoError: parsed.ocgoError || null, codexAvailable: !!parsed.codexAvailable, codexError: parsed.codexError || null }
       } catch (e) {
-        return { rows: [], codexRows: [], ocgoAvailable: false, ocgoError: 'parse: ' + String(e && e.message || e), codexAvailable: false, codexError: null }
+        const err = 'parse: ' + String(e && e.message || e)
+        return { rows: [], codexRows: [], ocgoAvailable: false, ocgoError: err, codexAvailable: false, codexError: err }
       }
     }
 
