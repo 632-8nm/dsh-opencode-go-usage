@@ -31,26 +31,16 @@ function makeHostEnv({ dynamic = true, sessions = [] } = {}) {
   globalThis.btoa = typeof globalThis.btoa === 'function' ? globalThis.btoa : (s) => Buffer.from(s, 'binary').toString('base64')
 
   const shellCalls = []
-  // 稳定"今天"时间:凌晨 1:05,避免 Date.now()-偏移 在午夜前后跨到昨天导致 today 桶断言脆弱
-  const todayEarly = (() => { const d = new Date(); d.setHours(1, 5, 0, 0); return d.getTime() })()
   const shell = {
     resolve: (req) => ({ ...req }),
     run: async (spec) => {
       shellCalls.push(spec.command)
-      // 配额命令(含 /zen/go/v1/usage)与数据库命令(含 base64 payload)分开应答。
+      // 配额命令(含 /zen/go/v1/usage)→ 返回配额 JSON
       if (spec.command.includes('zen/go/v1/usage')) {
         return { exitCode: 0, stdout: { text: JSON.stringify({ usage: { rolling: { percent: 30, status: 'ok', resetsAt: 1787000000000 }, weekly: { percent: 12, status: 'ok', resetsAt: 1787000000000 } } }) }, stderr: { text: '' } }
       }
-      // collectDb:返回 1 条 opencode 行 + 1 条 codex 行 + 两源均可用。
-      return {
-        exitCode: 0,
-        stdout: { text: JSON.stringify({
-          rows: [{ id: 'oc-0', title: 'OC 会话', model: 'opencode-go/deepseek-v4-flash', provider: 'opencode', time: todayEarly, inputTokens: 1000, outputTokens: 500, reasoningTokens: 10, cacheReadTokens: 100, cacheWriteTokens: 50, costOfficial: 0.0005 }],
-          codexRows: [{ id: 'cx-0', title: 'Codex 会话', model: 'gpt-5.6-luna', provider: 'codex', time: todayEarly, inputTokens: 2000, outputTokens: 1000, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costOfficial: 0.012 }],
-          ocgoAvailable: true, ocgoError: null, codexAvailable: true, codexError: null,
-        }) },
-        stderr: { text: '' },
-      }
+      // 官方 usage.list(mock 空记录,避免测试联网)
+      return { exitCode: 0, stdout: { text: JSON.stringify({ ok: true, records: [], truncated: false }) }, stderr: { text: '' } }
     },
   }
 
@@ -105,27 +95,23 @@ test('动态模式:注册 ocgo-usage:fetch 并正确聚合多数据源', async (
   const data = await handle(null)
   assert.equal(data.ok, true)
 
-  // DSH 两笔 + opencode 1 笔 + codex 1 笔 = 4 个请求
-  assert.equal(data.all.total.requests, 4)
-  // DSH 视图只含 DSH 两笔
+  // DSH 会话分析:两笔 opencode-go(本地三源已移除,不再注入 opencode/codex)
   assert.equal(data.dsh.total.requests, 2)
-
-  // cash 聚合:今日应为 4 笔(都在今日)
-  assert.equal(data.all.today.requests, 4)
-  assert.ok(typeof data.all.total.cost_est === 'number')
+  assert.equal(data.dsh.today.requests, 2)
+  assert.ok(typeof data.dsh.total.cost_est === 'number')
 
   // 模型排行按 cost 降序
-  assert.ok(data.all.by_model.length >= 1)
-  const costs = data.all.by_model.map((x) => x.cost_est)
+  assert.ok(data.dsh.by_model.length >= 1)
+  const costs = data.dsh.by_model.map((x) => x.cost_est)
   assert.deepEqual(costs, [...costs].sort((a, b) => b - a), 'by_model 应按 cost 降序')
 
   // 配额解析
   assert.equal(data.quota.rolling.percent, 30)
-
-  // 数据源可用标志
-  assert.equal(data.ocgoAvailable, true)
-  assert.equal(data.codexAvailable, true)
   assert.equal(data.quotaError, null)
+
+  // 官方明细:首次调用可能是 loading(后台拉取中)或已完成的 mock 空数据
+  assert.ok(data.official, '应包含 official 字段')
+  assert.ok(data.official.ok || data.official.loading, 'official 应为数据或加载中')
 
   // 两次调用:45s 缓存应复用同一对象(并发去重也生效)
   const again = await handle(null)
@@ -147,8 +133,6 @@ test('口径:DSH 源只统计 opencode-go provider,其它 provider 被排除', a
   const data = await env.handlers.get('ocgo-usage:fetch')(null)
   // DSH 视图只有 opencode-go 那 1 笔;deepseek 直连与无来源均不计入
   assert.equal(data.dsh.total.requests, 1)
-  // 全部视图 = 1(DSH opencode-go)+ 1(oc)+ 1(cx)= 3
-  assert.equal(data.all.total.requests, 3)
 })
 
 // ---------------------------------------------------------------------------
@@ -197,17 +181,16 @@ test('客户端 apply 在空上下文(无 slots)时干净返回', async () => {
 // ---------------------------------------------------------------------------
 // 5. 聚合边界(通过 host 的 buildView 真实代码验证)
 // ---------------------------------------------------------------------------
-test('聚合:空 DSH 数据时 opencode/codex 仍正常,不含 NaN', async () => {
+test('聚合:空 DSH 数据时不含 NaN,by_day 完整', async () => {
   const env = makeHostEnv({ dynamic: true, sessions: [] })
   const m = await import(HOST_URL)
   m.apply(env.ctx)
   const data = await env.handlers.get('ocgo-usage:fetch')(null)
-  assert.equal(data.all.total.requests, 2) // 仅 opencode + codex
   assert.equal(data.dsh.total.requests, 0) // DSH 空
-  assert.ok(Number.isFinite(data.all.total.cost_est))
-  assert.ok(Number.isFinite(data.all.month.cost_est))
-  assert.ok(data.all.by_day.length === 30)
-  for (const d of data.all.by_day) assert.equal(typeof d.cost_est, 'number')
+  assert.ok(Number.isFinite(data.dsh.total.cost_est))
+  assert.ok(Number.isFinite(data.dsh.month.cost_est))
+  assert.ok(data.dsh.by_day.length === 30)
+  for (const d of data.dsh.by_day) assert.equal(typeof d.cost_est, 'number')
 })
 
 // 时间戳为 0 的记录不应制造 NaN
@@ -218,12 +201,10 @@ test('聚合:time=0 的记录不产生 Invalid/NaN 时间桶', async () => {
   m.apply(env.ctx)
   const data = await env.handlers.get('ocgo-usage:fetch')(null)
   // DSH 的 time=0 那笔计入累计,且总 cost 为有限数
-  // (测试环境 shell mock 总会注入 1 条 opencode + 1 条 codex,故 total=1+1+1=3)
   assert.equal(data.dsh.total.requests, 1)
-  assert.equal(data.all.total.requests, 3)
-  assert.ok(Number.isFinite(data.all.total.cost_est))
+  assert.ok(Number.isFinite(data.dsh.total.cost_est))
   // 近 30 天柱状图 cost_est 全部为有限数(1970 桶不在窗口内,不应出现 NaN)
-  for (const d of data.all.by_day) assert.equal(typeof d.cost_est, 'number')
+  for (const d of data.dsh.by_day) assert.equal(typeof d.cost_est, 'number')
 })
 
 // ---------------------------------------------------------------------------
