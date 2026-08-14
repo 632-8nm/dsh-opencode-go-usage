@@ -31,6 +31,8 @@ function makeHostEnv({ dynamic = true, sessions = [] } = {}) {
   globalThis.btoa = typeof globalThis.btoa === 'function' ? globalThis.btoa : (s) => Buffer.from(s, 'binary').toString('base64')
 
   const shellCalls = []
+  // 稳定"今天"时间:凌晨 1:05,避免 Date.now()-偏移 在午夜前后跨到昨天导致 today 桶断言脆弱
+  const todayEarly = (() => { const d = new Date(); d.setHours(1, 5, 0, 0); return d.getTime() })()
   const shell = {
     resolve: (req) => ({ ...req }),
     run: async (spec) => {
@@ -43,8 +45,8 @@ function makeHostEnv({ dynamic = true, sessions = [] } = {}) {
       return {
         exitCode: 0,
         stdout: { text: JSON.stringify({
-          rows: [{ id: 'oc-0', title: 'OC 会话', model: 'opencode-go/deepseek-v4-flash', provider: 'opencode', time: Date.now() - 3600e3, inputTokens: 1000, outputTokens: 500, reasoningTokens: 10, cacheReadTokens: 100, cacheWriteTokens: 50, costOfficial: 0.0005 }],
-          codexRows: [{ id: 'cx-0', title: 'Codex 会话', model: 'gpt-5.6-luna', provider: 'codex', time: Date.now() - 7200e3, inputTokens: 2000, outputTokens: 1000, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costOfficial: 0.012 }],
+          rows: [{ id: 'oc-0', title: 'OC 会话', model: 'opencode-go/deepseek-v4-flash', provider: 'opencode', time: todayEarly, inputTokens: 1000, outputTokens: 500, reasoningTokens: 10, cacheReadTokens: 100, cacheWriteTokens: 50, costOfficial: 0.0005 }],
+          codexRows: [{ id: 'cx-0', title: 'Codex 会话', model: 'gpt-5.6-luna', provider: 'codex', time: todayEarly, inputTokens: 2000, outputTokens: 1000, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costOfficial: 0.012 }],
           ocgoAvailable: true, ocgoError: null, codexAvailable: true, codexError: null,
         }) },
         stderr: { text: '' },
@@ -222,4 +224,24 @@ test('聚合:time=0 的记录不产生 Invalid/NaN 时间桶', async () => {
   assert.ok(Number.isFinite(data.all.total.cost_est))
   // 近 30 天柱状图 cost_est 全部为有限数(1970 桶不在窗口内,不应出现 NaN)
   for (const d of data.all.by_day) assert.equal(typeof d.cost_est, 'number')
+})
+
+// ---------------------------------------------------------------------------
+// 6. i18n:zh/en 字典键完全对齐,产物含切换逻辑
+// ---------------------------------------------------------------------------
+test('i18n:中英字典键完全一致且产物含语言切换逻辑', () => {
+  const src = readFileSync(join(root, 'src', 'client.js'), 'utf8')
+  const zhBlock = src.match(/zh: \{([\s\S]*?)\n      \},/)
+  const enBlock = src.match(/en: \{([\s\S]*?)\n    \}/)
+  assert.ok(zhBlock && enBlock, '应能提取 zh/en 字典块')
+  const keysOf = (block) => [...block.matchAll(/'([^']+)':/g)].map((m) => m[1]).sort()
+  const zhKeys = keysOf(zhBlock[1])
+  const enKeys = keysOf(enBlock[1])
+  assert.deepEqual(zhKeys, enKeys, 'zh/en 字典键必须一一对应(防止漏翻译)')
+  assert.ok(zhKeys.length >= 30, '字典应有足够条目(当前 ' + zhKeys.length + ')')
+
+  const client = readFileSync(join(root, 'lib', 'client.js'), 'utf8')
+  assert.ok(client.includes("'lang.switch'"), '产物应包含语言切换文案键')
+  assert.ok(client.includes('toggleLang'), '产物应包含 toggleLang 切换逻辑')
+  assert.ok(client.includes('ocgo-lang-v1'), '产物应持久化语言选择')
 })
