@@ -1,0 +1,8 @@
+# dsh-opencode-go-usage bundle layer
+#
+# Applied when a profile lists this bundle. `name` is the PACKAGE NAME
+# (resolved through the profile's node_modules or `$DSH_HOME/profiles/node_modules`),
+# not a relative path.
+- insert:
+    - id: opencode-go-usage
+      name: dsh-opencode-go-usage
