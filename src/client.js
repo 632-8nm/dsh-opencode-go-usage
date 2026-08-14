@@ -101,7 +101,7 @@ return {
           React.createElement('text', { x: 38, y: 35, textAnchor: 'middle', className: 'ocgo-donut-val' }, p + '%'),
           React.createElement('text', { x: 38, y: 48, textAnchor: 'middle', className: 'ocgo-donut-lbl' }, props.label)
         ),
-        React.createElement('span', { className: 'ocgo-donut-time' }, props.resetsAt ? fmtTime(new Date(props.resetsAt).getTime()) + ' 重置' : '')
+        React.createElement('span', { className: 'ocgo-donut-time' }, props.resetsAt ? fmtTime(new Date(props.resetsAt).getTime()) + ' 重置' : '重置时间未知')
       )
     }
     function Stat(props) {

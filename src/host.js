@@ -171,29 +171,58 @@ return {
       }
     }
 
-    // --- 数据源 4:官方配额(curl native TLS,代理友好;key 在 pwsh 内读取,不进日志) ---
+    // --- 数据源 4:官方配额(双通道容错:curl native TLS 优先,python urllib 兜底) ---
+    const QUOTA_PY = [
+      'import json, os, urllib.request',
+      'HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or r"C:\\Users\\Xenia"',
+      'AUTH = os.path.join(HOME, ".local", "share", "opencode", "auth.json")',
+      'try:',
+      '    with open(AUTH, "r", encoding="utf-8") as f:',
+      '        key = json.load(f).get("opencode-go", {}).get("key")',
+      '    if not key:',
+      '        raise RuntimeError("no key")',
+      '    req = urllib.request.Request("https://opencode.ai/zen/go/v1/usage", headers={"Authorization": "Bearer " + key, "User-Agent": "dsh-ocgo-usage"})',
+      '    with urllib.request.urlopen(req, timeout=15) as r:',
+      '        print(r.read().decode("utf-8"))',
+      'except Exception as e:',
+      '    print(json.dumps({"error": repr(e)[:200]}))',
+    ].join('\n')
+    const QUOTA_PY_PAYLOAD = btoa(QUOTA_PY)
+
     async function collectQuota() {
-      const cmd = '$k=(Get-Content "$env:USERPROFILE\\.local\\share\\opencode\\auth.json" -Raw|ConvertFrom-Json).\'opencode-go\'.key; if(-not $k){Write-Error "no-key";exit 1}; curl.exe -s -m 15 -H "Authorization: Bearer $k" https://opencode.ai/zen/go/v1/usage'
-      const spec = shell.resolve({ command: cmd, timeoutMs: 20000 })
-      const result = await shell.run(spec)
-      if (result.exitCode !== 0) {
-        const raw = result.stderr
-        return { error: String(typeof raw === 'string' ? raw : (raw && raw.text != null ? raw.text : raw || '')).slice(0, 200) }
-      }
-      const raw = result.stdout
-      const text = typeof raw === 'string' ? raw : (raw && raw.text != null ? String(raw.text) : '')
-      try {
-        const data = JSON.parse(text)
-        const u = data.usage || {}
-        const out = {}
-        for (const k of ['rolling', 'weekly', 'monthly']) {
-          const v = u[k]
-          if (v && typeof v === 'object') out[k] = { percent: v.percent, status: v.status, resetsAt: v.resetsAt }
+      const parse = (text) => {
+        try {
+          const data = JSON.parse(text)
+          const u = data.usage || {}
+          const out = {}
+          for (const k of ['rolling', 'weekly', 'monthly']) {
+            const v = u[k]
+            if (v && typeof v === 'object') out[k] = { percent: v.percent, status: v.status, resetsAt: v.resetsAt }
+          }
+          if (!Object.keys(out).length) return { error: 'empty usage payload' }
+          return out
+        } catch (e) {
+          return { error: 'parse: ' + String(e && e.message || e) }
         }
-        return out
-      } catch (e) {
-        return { error: 'quota parse: ' + String(e && e.message || e) }
       }
+      const stdoutText = (raw) => typeof raw === 'string' ? raw : (raw && raw.text != null ? String(raw.text) : '')
+
+      // 通道 1:curl(Windows 原生 TLS,代理兼容;key 在 pwsh 内读取,不进日志)
+      const curlCmd = '$k=(Get-Content "$env:USERPROFILE\\.local\\share\\opencode\\auth.json" -Raw|ConvertFrom-Json).\'opencode-go\'.key; if(-not $k){Write-Error "no-key";exit 1}; curl.exe -s -m 15 -H "Authorization: Bearer $k" https://opencode.ai/zen/go/v1/usage'
+      const c1 = await shell.run(shell.resolve({ command: curlCmd, timeoutMs: 20000 }))
+      if (c1.exitCode === 0) {
+        const r = parse(stdoutText(c1.stdout))
+        if (!r.error) return r
+      }
+      // 通道 2:python urllib 兜底
+      const pyCmd = "$py='E:\\python\\python.exe';if(-not(Test-Path $py)){$c=Get-Command python -ErrorAction SilentlyContinue;if($c){$py=$c.Source}else{Write-Error 'python-not-found';exit 1}}; & $py -c \"import base64;exec(base64.b64decode('" + QUOTA_PY_PAYLOAD + "'))\""
+      const c2 = await shell.run(shell.resolve({ command: pyCmd, timeoutMs: 20000 }))
+      if (c2.exitCode === 0) {
+        const r = parse(stdoutText(c2.stdout))
+        if (!r.error) return r
+        return { error: 'curl+py 均失败: ' + r.error }
+      }
+      return { error: 'curl+py 均失败: ' + String(c1.stderr || c2.stderr || '').slice(0, 200) }
     }
 
     // --- 聚合视图:今日/本月/累计、按模型、按天、最近会话 ---
