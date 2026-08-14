@@ -68,7 +68,9 @@ return {
 
     function fmtUsd(v) {
       if (v == null) return '—'
-      return '$' + Number(v).toFixed(2)
+      const n = Number(v)
+      if (n !== 0 && Math.abs(n) < 0.01) return '$' + n.toFixed(4)
+      return '$' + n.toFixed(2)
     }
     function fmtTokens(n) {
       if (n == null) return ''
@@ -223,7 +225,12 @@ return {
       const d = state.data
       const vd = (d && (view === 'dsh' ? d.dsh : d.all)) || null
       const total = vd ? vd.total : null
-      const rollPct = d && d.quota && d.quota.rolling ? d.quota.rolling.percent : null
+      const qz = d && d.quota
+      const rollPct = qz && qz.rolling ? qz.rolling.percent : null
+      const fabTitle = 'OpenCode Go 用量 · 滚动 ' + (rollPct != null ? rollPct + '%' : '—') +
+        (qz && qz.weekly ? ' · 周 ' + qz.weekly.percent + '%' : '') +
+        (qz && qz.monthly ? ' · 月 ' + qz.monthly.percent + '%' : '') +
+        ' (拖动移动,点击打开)'
 
       const fabStyle = {}
       if (fabPos) { fabStyle.left = fabPos.x; fabStyle.top = fabPos.y; fabStyle.right = 'auto'; fabStyle.bottom = 'auto' }
@@ -271,7 +278,7 @@ return {
         body.push(React.createElement('div', { key: 'stats', className: 'ocgo-stats' },
           React.createElement(Stat, { label: '今日', value: fmtUsd(vd.today.cost_est), sub: vd.today.requests + ' 次 · ' + fmtTokens(vd.today.tokens_input + vd.today.tokens_output) + ' tok' }),
           React.createElement(Stat, { label: '本月', value: fmtUsd(vd.month.cost_est), sub: vd.month.requests + ' 次 · ' + fmtTokens(vd.month.tokens_input + vd.month.tokens_output) + ' tok' }),
-          React.createElement(Stat, { label: '累计', value: fmtUsd(vd.total.cost_est), sub: fmtTokens(vd.total.tokens_input) + ' in / ' + fmtTokens(vd.total.tokens_output) + ' out' })
+          React.createElement(Stat, { label: '累计', value: fmtUsd(vd.total.cost_est), sub: fmtTokens(vd.total.tokens_input) + ' in / ' + fmtTokens(vd.total.tokens_output) + ' out · cache ' + fmtTokens(vd.total.tokens_cache_read) })
         ))
         const z = d.quota
         if (z && !z.error && Object.keys(z).length) {
