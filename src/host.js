@@ -253,6 +253,67 @@ return {
     }
     const PY_PAYLOAD = utf8B64(PY_SCRIPT)
 
+    // --- 数据源 5:官方账户级用量明细(usage.list server-fn,需浏览器 cookie) ---
+    // 配置:~/.config/dsh-opencode-go-usage.json  {"authCookie": "...", "workspaceId": "wrk_..."}
+    // cookie 在 opencode.ai 登录后浏览器 Application/Cookies 里复制名为 auth 的值。
+    // 返回逐请求官方计费明细(cost 单位 1e-8 美元),账户级、跨设备,与官网账单一致。
+    const OFFICIAL_SCRIPT = [
+      'import json, os, re, time, urllib.request, urllib.parse',
+      'HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or r"C:\\Users\\Xenia"',
+      'CFG = os.path.join(HOME, ".config", "dsh-opencode-go-usage.json")',
+      'FID = "bfd684bfc2e4eed05cd0b518f5e4eafd3f3376e3938abb9e536e7c03df831e5c"',
+      'PAGE_SIZE = 50',
+      'out = {"ok": False, "error": None, "records": [], "truncated": False}',
+      'try:',
+      '    with open(CFG, encoding="utf-8-sig") as fh: cfg = json.load(fh)',
+      '    CK = cfg.get("authCookie") or ""',
+      '    WID = cfg.get("workspaceId") or ""',
+      '    if not CK or not WID: raise ValueError("配置缺少 authCookie/workspaceId")',
+      '    MAXP = int(cfg.get("maxPages", 150))',
+      '    for page in range(MAXP):',
+      '        args = urllib.parse.quote(json.dumps([WID, page]))',
+      '        url = "https://opencode.ai/_server?id=%s&args=%s" % (FID, args)',
+      '        req = urllib.request.Request(url, headers={',
+      '            "Cookie": "auth=" + CK,',
+      '            "X-Server-Id": FID,',
+      '            "X-Server-Instance": "server-fn:ocgo-%d" % page,',
+      '            "Origin": "https://opencode.ai",',
+      '            "Referer": "https://opencode.ai/workspace/%s/usage" % WID,',
+      '            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/143.0.0.0 Safari/537.36",',
+      '        })',
+      '        text = None',
+      '        for attempt in range(3):',
+      '            try:',
+      '                with urllib.request.urlopen(req, timeout=30) as r:',
+      '                    text = r.read().decode("utf-8", "replace")',
+      '                break',
+      '            except Exception:',
+      '                time.sleep(1.0)',
+      '        if text is None: break',
+      '        got = 0',
+      '        for b in re.findall(r\'\\{id:"usg_[^}]*?\\}\', text):',
+      '            ts = re.search(r\'new Date\\("\' + r\'([^"]+)"\\)\', b)',
+      '            model = re.search(r\'model:"([^"]+)"\', b)',
+      '            cost = re.search(r\'cost:(\\d+)\', b)',
+      '            if not (ts and model and cost): continue',
+      '            def num(p):',
+      '                m = re.search(p, b)',
+      '                return int(m.group(1)) if m else 0',
+      '            out["records"].append({"ts": ts.group(1), "model": model.group(1),',
+      '                "ti": num(r\'inputTokens:(\\d+)\'), "to": num(r\'outputTokens:(\\d+)\'),',
+      '                "rt": num(r\'reasoningTokens:(\\d+)\'), "cr": num(r\'cacheReadTokens:(\\d+)\'),',
+      '                "cost": int(cost.group(1))})',
+      '            got += 1',
+      '        if got < PAGE_SIZE: break',
+      '        time.sleep(0.4)',
+      '    out["ok"] = True',
+      '    out["truncated"] = len(out["records"]) >= MAXP * PAGE_SIZE',
+      'except Exception as e:',
+      '    out["error"] = repr(e)[:200]',
+      'print(json.dumps(out))',
+    ].join('\n')
+    const OFFICIAL_PAYLOAD = utf8B64(OFFICIAL_SCRIPT)
+
     // --- 数据源 4:官方配额(双通道容错:curl native TLS 优先,python urllib 兜底) ---
     const QUOTA_PY = [
       'import json, os, urllib.request',
@@ -398,21 +459,70 @@ return {
       return { today: agg(todayRows), month: agg(monthRows), total: agg(rows), by_model: modelList, by_provider: providerList, by_day: dayList, recent }
     }
 
+    // 官方账户级用量(usage.list)。15 分钟缓存 + 并发去重:全量分页开销大,
+    // 面板 60s 轮询不应反复触发;标注 truncated 表示页数超上限(数据截断)。
+    let officialCache = null
+    let officialInflight = null
+    async function collectOfficial() {
+      if (officialCache && Date.now() - officialCache.at < 15 * 60 * 1000) return officialCache.data
+      if (officialInflight) return officialInflight
+      officialInflight = (async () => {
+        try {
+          const cmd = "$py='E:\\python\\python.exe';if(-not(Test-Path $py)){$c=Get-Command python -ErrorAction SilentlyContinue;if($c){$py=$c.Source}else{Write-Error 'python-not-found';exit 1}}; & $py -c \"import base64;exec(base64.b64decode('" + OFFICIAL_PAYLOAD + "'))\""
+          const spec = shell.resolve({ command: cmd, timeoutMs: 240000, stdoutMaxBytes: 32 * 1024 * 1024 })
+          const result = await shell.run(spec)
+          const stderrText = String(typeof result.stderr === 'string' ? result.stderr : (result.stderr && result.stderr.text != null ? result.stderr.text : '')).slice(0, 200)
+          if (result.exitCode !== 0) return { ok: false, error: stderrText || '子进程退出码 ' + result.exitCode }
+          const raw = result.stdout
+          const text = typeof raw === 'string' ? raw : (raw && raw.text != null ? String(raw.text) : '')
+          const parsed = JSON.parse(text)
+          if (!parsed.ok) return { ok: false, error: parsed.error || 'unknown' }
+          const rows = (parsed.records || []).map((r, i) => ({
+            id: 'of-' + i,
+            title: null,
+            model: r.model,
+            provider: 'official',
+            time: Date.parse(r.ts) || 0,
+            inputTokens: r.ti || 0,
+            outputTokens: r.to || 0,
+            reasoningTokens: r.rt || 0,
+            cacheReadTokens: r.cr || 0,
+            cacheWriteTokens: 0,
+            // usage.list 的 cost 单位为 1e-8 美元(实测与官网账单吻合)
+            costOfficial: (r.cost || 0) / 1e8,
+          }))
+          return { ok: true, vd: buildView(rows), truncated: !!parsed.truncated, records: rows.length }
+        } catch (e) {
+          return { ok: false, error: String((e && e.message) || e) }
+        } finally {
+          officialInflight = null
+        }
+      })()
+      try {
+        const data = await officialInflight
+        officialCache = { at: Date.now(), data }
+        return data
+      } finally {
+        officialInflight = null
+      }
+    }
+
     // 并发去重:同一时刻只跑一次全量聚合(面板打开/刷新/定时轮询可能同时触发)。
     let inflight = null
     async function fetchAll() {
       if (cache && Date.now() - cache.at < 45000) return cache.data
       if (inflight) return inflight
       inflight = (async () => {
-        // 三数据源并行(此前串行,每次刷新延迟约为三者之和)
-        const [dshRows, db, quota] = await Promise.all([
+        // 四数据源并行(官方源自带 15 分钟缓存,失败降级不影响其它源)
+        const [dshRows, db, quota, official] = await Promise.all([
           collectDsh().catch(() => []),
           collectDb(),
           collectQuota(),
+          collectOfficial().catch(() => ({ ok: false, error: 'collectOfficial 异常' })),
         ])
         const dsh = buildView(dshRows)
         const all = buildView(dshRows.concat(db.rows, db.codexRows))
-        const data = { ok: true, fetchedAt: Date.now(), quota: quota.error ? null : quota, quotaError: quota.error || null, dsh, all, ocgoAvailable: db.ocgoAvailable, ocgoError: db.ocgoError, codexAvailable: db.codexAvailable, codexError: db.codexError }
+        const data = { ok: true, fetchedAt: Date.now(), quota: quota.error ? null : quota, quotaError: quota.error || null, dsh, all, official, ocgoAvailable: db.ocgoAvailable, ocgoError: db.ocgoError, codexAvailable: db.codexAvailable, codexError: db.codexError }
         cache = { at: Date.now(), data }
         return data
       })()

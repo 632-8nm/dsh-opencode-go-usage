@@ -19,6 +19,10 @@ return {
         'title': 'OpenCode Go 用量',
         'view.all': '全部',
         'view.dsh': 'DSH',
+        'view.official': '官方',
+        'official.err': '官方数据不可用: {e}',
+        'foot.official': '官方账户级 usage.list · 更新 {t}',
+        'foot.officialTrunc': '官方数据截断(仅最近 7500 条)',
         'srcs.title': '数据源',
         'src.quota': '配额 API',
         'stat.today': '今日',
@@ -86,6 +90,10 @@ return {
         'title': 'OpenCode Go Usage',
         'view.all': 'All',
         'view.dsh': 'DSH',
+        'view.official': 'Official',
+        'official.err': 'Official data unavailable: {e}',
+        'foot.official': 'Official account-level usage.list · updated {t}',
+        'foot.officialTrunc': 'Official data truncated (recent 7500 only)',
         'srcs.title': 'Sources',
         'src.quota': 'Quota API',
         'stat.today': 'Today',
@@ -563,7 +571,8 @@ return {
       }
 
       const d = state.data
-      const vd = (d && (view === 'dsh' ? d.dsh : d.all)) || null
+      const official = d && d.official
+      const vd = (d && (view === 'dsh' ? d.dsh : view === 'official' ? (official && official.ok ? official.vd : null) : d.all)) || null
       const total = vd ? vd.total : null
       const pct = (v) => (v == null ? null : Math.round(v))
       const qz = d && d.quota
@@ -609,11 +618,17 @@ return {
           React.createElement('div', null, t('err.title')),
           React.createElement('div', null, state.error)
         ))
+      } else if (view === 'official' && official && !official.ok) {
+        body.push(React.createElement('div', { key: 'oe', className: 'ocgo-err' },
+          React.createElement('div', null, t('official.err', { e: official.error || 'unknown' })),
+          React.createElement('div', null, '~/.config/dsh-opencode-go-usage.json')
+        ))
       } else if (vd) {
         body.push(React.createElement('div', { key: 'views', className: 'ocgo-viewrow' },
           React.createElement('div', { className: 'ocgo-seg' },
             React.createElement('button', { className: 'ocgo-seg-btn' + (view === 'dsh' ? ' on' : ''), onClick: () => setView('dsh') }, 'DSH'),
-            React.createElement('button', { className: 'ocgo-seg-btn' + (view === 'all' ? ' on' : ''), onClick: () => setView('all') }, t('view.all'))
+            React.createElement('button', { className: 'ocgo-seg-btn' + (view === 'all' ? ' on' : ''), onClick: () => setView('all') }, t('view.all')),
+            React.createElement('button', { className: 'ocgo-seg-btn' + (view === 'official' ? ' on' : ''), onClick: () => setView('official') }, t('view.official'))
           ),
           React.createElement('span', { className: 'ocgo-spacer' })
         ))
@@ -733,11 +748,13 @@ return {
           ))
         }
         const foot = [
-          React.createElement('span', { key: 'src' }, view === 'dsh' ? t('foot.src.dsh') : t('foot.src.all')),
-          React.createElement('span', { key: 'est' }, t('foot.est')),
+          React.createElement('span', { key: 'src' }, view === 'dsh' ? t('foot.src.dsh') : view === 'official'
+            ? t('foot.official', { t: stamp ? fmtTime(stamp) : '—' }) + (official && official.truncated ? ' · ' + t('foot.officialTrunc') : '')
+            : t('foot.src.all')),
+          React.createElement('span', { key: 'est' }, view === 'official' ? null : t('foot.est')),
           React.createElement('span', { key: 'upd' }, t('foot.upd', { t: stamp ? fmtTime(stamp) : '—' })),
           React.createElement('span', { key: 'int' }, t('foot.int'))
-        ]
+        ].filter(Boolean)
         // 官方 vs 本地对账:官方月度 = monthly% × $60(账户级),本地 = 本机三源合计
         const qm = d && d.quota && d.quota.monthly
         if (qm && qm.percent != null && vd && vd.month && vd.month.cost_est != null) {

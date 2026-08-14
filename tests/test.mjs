@@ -245,3 +245,19 @@ test('i18n:中英字典键完全一致且产物含语言切换逻辑', () => {
   assert.ok(client.includes('toggleLang'), '产物应包含 toggleLang 切换逻辑')
   assert.ok(client.includes('ocgo-lang-v1'), '产物应持久化语言选择')
 })
+
+// ---------------------------------------------------------------------------
+// 7. 官方账户级源(usage.list)就位
+// ---------------------------------------------------------------------------
+test('host 源码包含官方 usage.list 抓取(配置/cookie/1e8 换算)', () => {
+  const src = readFileSync(join(root, 'src', 'host.js'), 'utf8')
+  assert.ok(src.includes('OFFICIAL_SCRIPT'), '应定义官方抓取脚本')
+  assert.ok(src.includes('dsh-opencode-go-usage.json'), '应使用本地配置文件')
+  assert.ok(src.includes('utf-8-sig'), '配置文件应容忍 BOM')
+  assert.ok(src.includes('usage.list') || src.includes('bfd684bfc2e4eed05cd0b518f5e4eafd3f3376e3938abb9e536e7c03df831e5c'), '应调用官方 usage.list server-fn')
+  assert.ok(src.includes('costOfficial: (r.cost || 0) / 1e8'), '官方 cost 应按 1e-8 美元换算')
+  const lib = readFileSync(join(root, 'lib', 'index.js'), 'utf8')
+  assert.ok(lib.includes('collectOfficial'), '产物应包含官方源聚合')
+  const client = readFileSync(join(root, 'lib', 'client.js'), 'utf8')
+  assert.ok(client.includes("'view.official'"), '面板应含官方视图')
+})

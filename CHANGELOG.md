@@ -2,6 +2,23 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.5.0] - 2026-08-16
+
+### 功能(官方账户级数据源)
+- **官方视图**:直接调官网 `usage.list` server-fn(逐请求官方计费,`cost` 单位为 1e-8 美元,实测与官网账单逐模型吻合 ±2%),显示账户级今日/本月/按模型/趋势/最近会话——跨设备、不受本地数据丢失影响
+- **官方源验证**:8-14 本地时区(UTC+8)对账——kimi-k3 $0.93、deepseek-v4-pro $0.22、glm-5.2 $0.06 等与官网账单精确吻合;8-14 白天缺口确认源于 DSH 数据目录 17:10 迁移前的会话丢失(本地不可恢复,官方视图可补)
+- 配置:`~/.config/dsh-opencode-go-usage.json`(authCookie + workspaceId),15 分钟缓存,失败降级不影响本地视图
+
+### 质量
+- 测试增至 10 个:官方源就位断言(脚本/配置/换算/产物/官方视图)
+
+## [1.4.0] - 2026-08-16
+
+### 修复(数据抓取口径,全部经真实数据实锤验证)
+- **DSH cache 口径**:`cacheReadTokens` 是会话累计上下文快照,直接求和会重复累计(12 会话假算出 733M);改为按会话相邻增量,并修正 cache 单价为实测 $0.031/M(官网表 0.0028 与官方 cost 反推差 11 倍)
+- **codex 源直读 jsonl**:绕开 cc-switch 会话同步(应用退出即断流,08-14 13:54 后无记录);直接解析 `~/.codex/sessions/**/*.jsonl` 的 `total_token_usage`,与 cc-switch 对账差异 <0.1%;修成本公式重复计缓存、时间解析(文件名兜底)
+- **面板对账行**:底部显示 `官方月 $X · 本地 $Y`,缺口一目了然
+
 ## [1.3.0] - 2026-08-16
 
 ### 功能(对标同类工具调研:OpenUsage / opencode-bar / AIUsageTracker / LiteLLM 等)
