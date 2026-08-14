@@ -65,7 +65,8 @@
 ```
 ┌──────────────────────────────────────────────────────────┐
 │  DSH 会话事件        assistant/message 事件携带真实 token  │
-│  (sessionQuery)      用量与模型/provider(任何 provider 通用)│
+│  (sessionQuery)      用量与模型/provider(仅统计 opencode-go │
+│                      provider 的会话,其它 provider 不计入)  │
 ├──────────────────────────────────────────────────────────┤
 │  opencode 官方库     part 表 step-finish 逐请求记录,含     │
 │  (opencode.db)       官方计算的 cost(仅 opencode-go)      │
@@ -78,7 +79,8 @@
 └──────────────────────────────────────────────────────────┘
 ```
 
-- **金额口径**:opencode / codex 为官方或代理记录的精确 cost;**DSH 部分按内置公开定价表估算**(输入/输出/cache 读/写按每百万 token 单价计算),面板底部有标注
+- **金额口径**:opencode / codex 为官方或代理记录的精确 cost;**DSH 部分按校准定价表估算**(deepseek-v4-flash 单价从本机 opencode-go 真实计费行拟合,其余模型为公开价;输入/输出/cache 读/写按每百万 token 单价计算),面板底部有标注
+- **来源口径**:三个来源均**只统计 opencode-go provider 的流量**(DSH 会话按 `source.provider == 'opencode-go'` 过滤,opencode.db 按 `session.model.providerID == 'opencode-go'` 过滤,cc-switch 只取 codex 应用日志);deepseek 直连、opencode 免费模型等非 Go key 流量一律不计入
 - **免费模型**:`*-free`(OpenCode Zen 免费)不计入,只统计 **opencode-go** 付费流量
 - **请求次数**:opencode 部分为逐请求(step-finish)计数,与 DSH 的逐次调用同口径
 

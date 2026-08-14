@@ -73,7 +73,7 @@ function makeHostEnv({ dynamic = true, sessions = [] } = {}) {
 function mkUsage(overrides = {}) {
   return { inputTokens: 100, outputTokens: 50, cacheReadTokens: 10, cacheWriteTokens: 5, reasoningTokens: 3, ...overrides }
 }
-function mkAssistantEvent(model, provider, usage) {
+function mkAssistantEvent(model, provider = 'opencode-go', usage) {
   return { type: 'assistant/message', time: Date.now(), data: { usage, message: { source: { kind: 'model', model, provider } } } }
 }
 
@@ -91,8 +91,8 @@ test('lib/index.js 导出 host ESM 契约(name/apply)', async () => {
 // ---------------------------------------------------------------------------
 test('动态模式:注册 ocgo-usage:fetch 并正确聚合多数据源', async () => {
   const sessions = [
-    { id: 's1', title: '会话一', events: [mkAssistantEvent('deepseek-ai/deepseek-v4-flash', 'deepseek', mkUsage({ inputTokens: 100, outputTokens: 50, cacheReadTokens: 10 }))] },
-    { id: 's2', title: null, events: [mkAssistantEvent('deepseek-v4-pro', 'deepseek', mkUsage({ inputTokens: 200 }))] },
+    { id: 's1', title: '会话一', events: [mkAssistantEvent('deepseek-ai/deepseek-v4-flash', 'opencode-go', mkUsage({ inputTokens: 100, outputTokens: 50, cacheReadTokens: 10 }))] },
+    { id: 's2', title: null, events: [mkAssistantEvent('deepseek-v4-pro', 'opencode-go', mkUsage({ inputTokens: 200 }))] },
   ]
   const env = makeHostEnv({ dynamic: true, sessions })
   const m = await import(HOST_URL)
@@ -128,6 +128,25 @@ test('动态模式:注册 ocgo-usage:fetch 并正确聚合多数据源', async (
   // 两次调用:45s 缓存应复用同一对象(并发去重也生效)
   const again = await handle(null)
   assert.equal(again, data, '45s 缓存内应返回同一对象')
+})
+
+test('口径:DSH 源只统计 opencode-go provider,其它 provider 被排除', async () => {
+  const sessions = [
+    // deepseek 直连(非 Go key)→ 应被排除
+    { id: 's1', title: '直连', events: [mkAssistantEvent('deepseek-v4-flash', 'deepseek', mkUsage({ inputTokens: 100000 }))] },
+    // opencode-go → 应计入
+    { id: 's2', title: 'Go', events: [mkAssistantEvent('deepseek-v4-flash', 'opencode-go', mkUsage({ inputTokens: 100 }))] },
+    // 无 source(unknown)→ 应被排除
+    { id: 's3', title: '无来源', events: [{ type: 'assistant/message', time: Date.now(), data: { usage: mkUsage({ inputTokens: 50000 }) } }] },
+  ]
+  const env = makeHostEnv({ dynamic: true, sessions })
+  const m = await import(HOST_URL)
+  m.apply(env.ctx)
+  const data = await env.handlers.get('ocgo-usage:fetch')(null)
+  // DSH 视图只有 opencode-go 那 1 笔;deepseek 直连与无来源均不计入
+  assert.equal(data.dsh.total.requests, 1)
+  // 全部视图 = 1(DSH opencode-go)+ 1(oc)+ 1(cx)= 3
+  assert.equal(data.all.total.requests, 3)
 })
 
 // ---------------------------------------------------------------------------
@@ -191,7 +210,7 @@ test('聚合:空 DSH 数据时 opencode/codex 仍正常,不含 NaN', async () =>
 
 // 时间戳为 0 的记录不应制造 NaN
 test('聚合:time=0 的记录不产生 Invalid/NaN 时间桶', async () => {
-  const sessions = [{ id: 's0', title: null, events: [{ type: 'assistant/message', time: 0, data: { usage: mkUsage(), message: { source: { model: 'deepseek-v4-flash', provider: 'deepseek' } } } }] }]
+  const sessions = [{ id: 's0', title: null, events: [{ type: 'assistant/message', time: 0, data: { usage: mkUsage(), message: { source: { model: 'deepseek-v4-flash', provider: 'opencode-go' } } } }] }]
   const env = makeHostEnv({ dynamic: true, sessions })
   const m = await import(HOST_URL)
   m.apply(env.ctx)
