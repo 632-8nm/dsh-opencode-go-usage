@@ -23,7 +23,7 @@
 | 🖱️ | **悬浮 FAB** | 右下角胶囊,可拖动,实时显示累计金额 + 滚动配额 %(配额 ≥70% 变黄、≥90% 变红) |
 | 🪟 | **窗口控制** | 拖标题栏移动、拖边缘/右下角缩放、双击/按钮最大化、淡入动画、位置/大小持久化 |
 | 📅 | **今日/本月/累计** | 花费 + 请求数 + token 明细(输入/输出/cache 读) |
-| 🏛️ | **官方账户级视图** | 主数据源:直接调官网 `usage.list` API,逐请求官方计费(与官网账单一致,跨设备);凭据**自动从 Edge 提取**,零配置 |
+| 🏛️ | **官方账户级视图** | 主数据源:直接调官网 `usage.list` API,逐请求官方计费(与官网账单一致,跨设备);凭据**自动提取**(调试端口 CDP / 浏览器 cookie 库),零配置 |
 | 📊 | **DSH 会话分析** | 保留会话级视角:估算 + 官方逐请求**精确回填**(实测匹配率 83%,金额修正 3.3×) |
 | 🍩 | **配额环形图** | 滚动(5 小时)/ 周 / 月官方配额百分比 + **重置倒计时**(如 `3h 45m 后重置`) |
 | 🔮 | **Pace 期末预测** | 按烧速外推窗口期末用量(预计 X%),超速时红色提示**预计耗尽时间**(窗口刚重置时不误报) |
@@ -68,8 +68,10 @@ OpenCode Go 的限额与定价来自 [opencode.ai/docs/go](https://opencode.ai/d
 ```
 ┌──────────────────────────────────────────────────────────┐
 │  官方用量明细        opencode.ai/_server usage.list        │
-│  (Edge cookie 自动   逐请求官方计费(账户级,跨设备,与官网    │
-│   提取 / 手动粘贴)   账单逐模型吻合 ±2%)——面板主数据源      │
+│  (浏览器自动提取:   逐请求官方计费(账户级,跨设备,与官网    │
+│   CDP 调试端口 /    账单逐模型吻合 ±2%)——面板主数据源      │
+│   cookie 库直读 /                                          │
+│   手动粘贴兜底)                                            │
 ├──────────────────────────────────────────────────────────┤
 │  DSH 会话分析        sessionQuery 事件(仅 opencode-go)     │
 │  (估算 + 官方回填)   cache 增量法估算;再与 usage.list 逐    │
@@ -149,13 +151,15 @@ AI 会读本 README,自己完成 clone、`pnpm add link:`、写 `dsh.profile.bun
 ```
 dsh-opencode-go-usage/
 ├── src/                 # 源码(动态插件函数体,含注释)
-│   ├── host.js          #   Host 半区:聚合、缓存、python 数据管道(本地库/jsonl/官方 usage.list/Edge 自动提取)
+│   ├── host.js          #   Host 半区:聚合、缓存、python 数据管道(官方 usage.list/CDP 自动提取)
 │   └── client.js        #   Client 半区:shell.overlay FAB + React 仪表盘
 ├── lib/                 # 构建产物(勿手改)
 │   ├── index.js         #   host ESM 入口(注入 node:fs 供凭据保存)
 │   └── client.js        #   浏览器注册形态 bundle
 ├── scripts/
-│   └── build-lib.mjs    # 构建 + 回归门禁(注册形态/harness 守卫断言)
+│   ├── build-lib.mjs        # 构建 + 回归门禁(注册形态/harness 守卫断言)
+│   ├── start-browser-debug.bat  # 以调试端口 9222 启动独立 Edge(CDP 自动提取用)
+│   └── verify-cdp.mjs       # 端到端验证 CDP 提取(从 src/host.js 提取真实函数测试)
 ├── tests/
 │   └── test.mjs         # 10 个用例:聚合、口径过滤、静态降级、bundle 注册、i18n、官方源
 ├── cordis.patch.yml     # bundle 补丁层(插入插件行,inject webServer)
@@ -172,19 +176,19 @@ dsh-opencode-go-usage/
 │  React 仪表盘 │ ─────────────────────────────────────▶ │  路由 + 聚合  │
 └─────────────┘         JSON(纯数据,无 live 对象)         └──────┬──────┘
                                                              │
-             ┌──────────────┬───────────────┬───────────────┼──────────────┐
-             ▼              ▼               ▼               ▼              ▼
-       sessionQuery    python(只读)     python(直读)    curl(官方配额)  python(官方明细)
-       DSH 会话事件     opencode.db      codex jsonl     usage 百分比    usage.list
-       (token+增量)     (官方 cost)      (官方定价)      (auth.json key) (Edge cookie)
+             ┌──────────────┬───────────────┬───────────────┬──────────────┐
+             ▼              ▼               ▼               ▼
+       sessionQuery    python(自动提取)   curl(官方配额)  python(官方明细)
+       DSH 会话事件    CDP 调试端口 /     usage 百分比    usage.list
+       (token+增量)    cookie 库 → auth  (auth.json key) (auth cookie)
 ```
 
 - Host 半区:动态模式走 `harness.handle` 私有 RPC;bundle 模式走 `webServer` 本地路由
   (`/ocgo-usage/fetch` 取数 + `/ocgo-usage/config` 存凭据)。45s 本地聚合缓存,
   官方源自带 15 分钟缓存,五数据源并行拉取,失败各自降级互不影响
-- Python 子进程只读打开 SQLite(`?mode=ro`)或解析 codex jsonl;配额走 curl native TLS
-  (代理兼容),key 在子进程内从 `auth.json` 读取;官方凭据自动从 Edge cookie 库
-  解密(DPAPI + AES-GCM,仅本机),均不进命令日志、不落盘
+- Python 子进程只读操作(cookie 库 `?mode=ro` 直读或调试端口 CDP);配额走 curl native TLS
+  (代理兼容),key 在子进程内从 `auth.json` 读取;官方凭据自动提取(CDP 优先,浏览器自身
+  解密 v20 加密;其次 cookie 库直读 v10 / Firefox 明文),均不进命令日志、不落盘
 - 构建回归门禁:`build-lib.mjs` 断言客户端注册形态、工厂 `require('react')`、host 无裸 `harness` 引用
 
 ## 🛠️ 开发
@@ -204,7 +208,8 @@ npm run typecheck  # src 语法校验
 DSH 会话事件没有官方 cost,先用官方定价估算(cache 按会话增量 × 实测单价);官方明细就绪后**自动与 usage.list 逐请求匹配回填官方 cost**(实测匹配率 83%)。DSH 视图 foot 会显示"官方回填 N 条"。想精确看账户级总额请用"官方"视图。
 
 **codex 流量算不算 Go 用量?**
-算。codex 的 `config.toml` 指向 `opencode.ai/zen/go/v1`(同一 Go key)。插件**直接读 `~/.codex/sessions/**/*.jsonl`** 会话记录(不依赖 cc-switch 运行),与 cc-switch 记录对账差异 <0.1%。
+算。codex 的 `config.toml` 指向 `opencode.ai/zen/go/v1`(同一 Go key),其用量已在官网
+`usage.list` 中按请求计费,官方视图与配额百分比天然包含;本地不再单独读 codex 会话(与官网重复)。
 
 **免费模型会被计入吗?**
 不会。`*-free`(OpenCode Zen 免费)以及 deepseek 直连等非 opencode-go 流量全部被过滤。
@@ -216,24 +221,35 @@ DSH 会话事件没有官方 cost,先用官方定价估算(cache 按会话增量
 的 reconcile 步骤),然后重启 DSH。重启后 host 路由与右下角 FAB 自动出现。
 
 **官方视图怎么配置?**
-面板"官方"视图直接调官网 `usage.list` 接口(账户级逐请求计费,与官网账单一致),凭据获取**全自动,任意浏览器**:
+面板"官方"视图直接调官网 `usage.list` 接口(账户级逐请求计费,与官网账单一致),凭据获取
+**全自动、任意浏览器登录过 opencode.ai 即可**,三种方式按优先级自动尝试:
 
-1. **零操作(推荐)**:只要用 **Edge / Chrome / Chromium / Brave / Vivaldi / Arc / Opera / Firefox** 任一浏览器登录过 `opencode.ai`,插件自动从浏览器 cookie 库提取 `auth` cookie 并解析 workspaceId(Chromium 系 DPAPI + AES-GCM 解密,Firefox 明文直读,全部本机处理)。浏览器正在运行时会提示"关闭浏览器后刷新",关闭后自动完成
-2. **手动兜底**:面板官方视图的错误区可直接粘贴 `authCookie` 和 `workspaceId` 并保存
+1. **调试端口 CDP(推荐,Edge 新版 v20 加密也支持)**:先运行
+   `scripts/start-browser-debug.bat` 以调试端口 9222 启动独立 Edge 窗口,首次在该窗口
+   登录一次 opencode.ai(之后长期有效),然后关闭该窗口即可。插件每次启动会探测
+   9222–9230 端口,浏览器自身解密 cookie 后交给插件,**无需关闭日常浏览器、无需管理员权限**
+2. **浏览器 cookie 库直读**:Edge / Chrome / Chromium / Brave / Vivaldi / Arc / Opera /
+   Firefox 任一浏览器登录过 `opencode.ai` 即可自动提取(Chromium 系 DPAPI + AES-GCM
+   解密,Firefox 明文直读,全部本机处理)。注意:该浏览器**正在运行时数据库被锁定**,
+   需先关闭它再刷新面板;v20 加密(新版 Chrome/Edge)无法直读时会自动跳过此方式
+3. **手动兜底**:面板官方视图的错误区可直接粘贴 `authCookie` 和 `workspaceId` 并保存
    - cookie:浏览器 F12 → Application → Cookies → 复制 `auth` 值
    - workspaceId:打开 `https://opencode.ai/workspace/<你的工作区>/usage`,地址栏里的 `wrk_xxx`
-3. 配置保存在 `~/.config/dsh-opencode-go-usage.json`(cookie 失效后自动重新提取或按上述更新)
 
-> 提示:新版 Chrome/Edge 的 v20 加密暂不支持自动提取(会提示手动粘贴);Chromium 系浏览器提取前需先关闭该浏览器(cookie 数据库锁定)。
+配置保存在 `~/.config/dsh-opencode-go-usage.json`(cookie 失效后自动重新提取或按上述更新)。
+
+> 为什么推荐调试端口方式:新版 Edge(v137+)cookie 使用 v20 应用绑定加密,普通用户权限
+> 无法从数据库直读;而调试端口方式让浏览器自己解密,**任何版本、任何浏览器都适用**。
+> 注意调试端口开启期间本机其它程序可访问该窗口浏览数据,用完请关闭该窗口。
 
 凭据只在本机使用,不进日志、不发送任何第三方;15 分钟缓存,失败自动降级不影响本地视图。
 
 ## 🔒 隐私
 
 - API key **只在本机**由子进程从 `~/.local/share/opencode/auth.json` 读取
-- 官方凭据(Edge cookie)仅本机解密使用(DPAPI + AES-GCM),不进日志、不落盘外传
+- 官方凭据(auth cookie)仅本机提取使用(CDP 调试端口或浏览器 cookie 库解密),不进日志、不落盘外传
 - 网络请求只发往官网(opencode.ai 配额接口 + usage.list 明细接口),不向任何第三方发送数据
-- 不写入、不修改任何数据库(全部 `mode=ro` 只读)
+- 不写入、不修改任何数据库(全部 `mode=ro` 只读;调试端口方式由浏览器自身返回 cookie,不触碰数据库文件)
 
 ## 📝 变更日志
 

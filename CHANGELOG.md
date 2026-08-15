@@ -2,6 +2,15 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.2] - 2026-08-16
+
+### 功能(调试端口 CDP 自动提取)
+- **CDP 调试端口提取**:探测 9222–9230 端口,通过浏览器调试协议(WebSocket,纯标准库零依赖)让浏览器自身解密并返回 `auth` cookie——**新版 Edge/Chrome v20 应用绑定加密也能用**,无需关闭日常浏览器、无需管理员权限、不触碰数据库文件
+- **一键启动器**:`scripts/start-browser-debug.bat` 以调试端口 9222 启动独立 Edge 配置(不影响日常 Edge),首次登录一次 opencode.ai 后长期有效
+- **提取优先级**:CDP 调试端口 → 浏览器 cookie 库直读(v10 / Firefox)→ 手动粘贴兜底;失败自动降级
+- **端到端验证通过**:`scripts/verify-cdp.mjs` 从真实调试浏览器提取到有效 cookie(`Fe26.2*`,561 字符),无配置状态下完整链路(CDP 提取 → workspace 解析 → usage.list 6068 条抓取)跑通并持久化配置
+- 修复 Python WebSocket 实现:改为单连接多次调用(`ws_connect` + `ws_call`),解决二次调用超时
+
 ## [1.6.1] - 2026-08-16
 
 ### 功能(cookie 自动提取支持任意浏览器)
