@@ -222,27 +222,36 @@ DSH 会话事件没有官方 cost,先用官方定价估算(cache 按会话增量
 
 **官方视图怎么配置?**
 面板"官方"视图直接调官网 `usage.list` 接口(账户级逐请求计费,与官网账单一致),凭据获取
-**全自动、任意浏览器登录过 opencode.ai 即可**,三种方式按优先级自动尝试:
+**全自动,只需手动做一次登录**:
 
-1. **调试端口 CDP(推荐,Edge 新版 v20 加密也支持)**:先运行
-   `scripts/start-browser-debug.bat` 以调试端口 9222 启动独立 Edge 窗口,首次在该窗口
-   登录一次 opencode.ai(之后长期有效),然后关闭该窗口即可。插件每次启动会探测
-   9222–9230 端口,浏览器自身解密 cookie 后交给插件,**无需关闭日常浏览器、无需管理员权限**
+**🚀 快速开始(推荐,首次只做这三步)**
+1. 双击运行 `scripts/start-browser-debug.bat`(会打开一个独立 Edge 窗口,不影响日常浏览器)
+2. 在该窗口里登录一次 opencode.ai
+3. 关闭该窗口
+
+之后打开面板即可看到官方数据。插件自动探测调试端口(9222–9230),由浏览器自身解密并
+交出 `auth` cookie,再解析 workspaceId 写入配置——**之后每次启动直接复用,无需再操作**。
+
+**自动提取优先级(失败自动降级到下一项)**
+1. **调试端口 CDP(推荐,Edge 新版 v20 加密也支持)**:通过浏览器调试协议读取 cookie,
+   浏览器自身解密,**无需关闭日常浏览器、无需管理员权限、不触碰数据库文件**
 2. **浏览器 cookie 库直读**:Edge / Chrome / Chromium / Brave / Vivaldi / Arc / Opera /
    Firefox 任一浏览器登录过 `opencode.ai` 即可自动提取(Chromium 系 DPAPI + AES-GCM
    解密,Firefox 明文直读,全部本机处理)。注意:该浏览器**正在运行时数据库被锁定**,
    需先关闭它再刷新面板;v20 加密(新版 Chrome/Edge)无法直读时会自动跳过此方式
-3. **手动兜底**:面板官方视图的错误区可直接粘贴 `authCookie` 和 `workspaceId` 并保存
+3. **手动粘贴兜底**:面板官方视图的错误区可直接粘贴 `authCookie` 和 `workspaceId` 并保存
    - cookie:浏览器 F12 → Application → Cookies → 复制 `auth` 值
    - workspaceId:打开 `https://opencode.ai/workspace/<你的工作区>/usage`,地址栏里的 `wrk_xxx`
 
-配置保存在 `~/.config/dsh-opencode-go-usage.json`(cookie 失效后自动重新提取或按上述更新)。
-
-**重置凭据(重抓)**:
-- **删掉配置文件**:删除 `~/.config/dsh-opencode-go-usage.json`(或先改名备份),再**运行一次
-  `scripts/start-browser-debug.bat` 并在调试窗口登录一次 opencode.ai**,之后关闭窗口、
-  刷新面板即可——插件会自动从调试浏览器重新提取 cookie 并解析 workspaceId,重新生成配置。
-- cookie 过期时面板会自动提示,按同样步骤即可恢复(也可随时手动粘贴更新)。
+**配置与重置**
+- 配置保存在 `~/.config/dsh-opencode-go-usage.json`:首次自动提取后生成,之后每次启动
+  直接复用,不重复抓取;cookie 失效时面板会自动提示
+- **重抓(cookie 过期 / 换账号 / 想彻底重新提取)**:
+  1. 删除 `~/.config/dsh-opencode-go-usage.json`(或先改名备份)
+  2. 运行一次 `scripts/start-browser-debug.bat`
+  3. 在调试窗口登录一次 opencode.ai,然后关闭窗口
+  4. 刷新面板 —— 插件自动重新提取并重新生成配置
+- 也可以随时在面板错误区手动粘贴 `authCookie` + `workspaceId` 直接覆盖
 
 > 为什么推荐调试端口方式:新版 Edge(v137+)cookie 使用 v20 应用绑定加密,普通用户权限
 > 无法从数据库直读;而调试端口方式让浏览器自己解密,**任何版本、任何浏览器都适用**。
