@@ -803,14 +803,18 @@ return {
         if (typeof shell === 'undefined' || !shell || typeof shell.resolve !== 'function') {
           return { ok: false, error: 'shell 不可用' }
         }
-        // EncodedCommand:脚本整体 base64 传递,彻底避免引号/括号/空格被 shell 服务破坏
+        // EncodedCommand:脚本整体 base64 传递,避免引号/括号被 shell 服务破坏。
+        // 启动用 WMI(Win32_Process.Create):由系统 WMI 服务创建进程,脱离 DSH
+        // 的进程树——否则命令结束后派生的浏览器会被 shell 服务一并清理(窗口不出现)。
         const ps = [
           "$edge='C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'",
           "if(-not(Test-Path $edge)){ $edge='C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe' }",
           "if(-not(Test-Path $edge)){ $edge='C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' }",
           "if(-not(Test-Path $edge)){ Write-Output 'NO_BROWSER'; exit 2 }",
           "$ud=Join-Path $env:USERPROFILE '.ocgo-browser-debug'",
-          "Start-Process $edge -ArgumentList '--remote-debugging-port=9222',('--user-data-dir='+$ud),'https://opencode.ai'",
+          "$cmd='\"' + $edge + '\" --remote-debugging-port=9222 --user-data-dir=\"' + $ud + '\" https://opencode.ai'",
+          "$r=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd }",
+          "if($r.ReturnValue -ne 0){ Write-Output 'NO_BROWSER'; exit 2 }",
           "Write-Output 'OK'",
           'exit 0',
         ].join('\n')
