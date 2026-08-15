@@ -1,0 +1,12 @@
+# 2026-08-15:UTF-8 BOM 曾导致 DSH profile 启动时 JSON.parse 崩溃(提交 2f3c85a 引入)。
+# charset = utf-8 表示"UTF-8 无 BOM";遵守 EditorConfig 的编辑器不会再写出 BOM。
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.md]
+trim_trailing_whitespace = false
