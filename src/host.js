@@ -801,8 +801,9 @@ return {
 
     // 一键启动调试浏览器(独立 profile + 调试端口 9222,不影响日常浏览器):
     // 用户登录一次后关闭窗口,插件即可通过 CDP 自动提取。不等待浏览器退出。
-    // 跨平台:Windows 走 powershell + explorer 中转;macOS 走 open -na;
-    // Linux 走 nohup 后台;CDP 探测/提取本身与平台无关。
+    // 跨平台:Windows 走 powershell + explorer 中转;macOS 走 open -na(launchd
+    // 启动,进程独立于 DSH);Linux 走 nohup 后台。浏览器候选为 Chromium 系
+    // (CDP 协议;Safari/Firefox 调试协议不兼容,无法走本方案)。
     async function launchDebugBrowser() {
       try {
         if (typeof shell === 'undefined' || !shell || typeof shell.resolve !== 'function') {
@@ -811,11 +812,15 @@ return {
         const plat = (typeof process !== 'undefined' && process.platform) || ''
         let cmd = null
         if (plat === 'darwin') {
-          // macOS:open -na 启动新实例并传参;Chrome 优先,回退 Edge
-          cmd = 'open -na "Google Chrome" --args --remote-debugging-port=9222 --user-data-dir="$HOME/.ocgo-browser-debug" https://opencode.ai 2>/dev/null || open -na "Microsoft Edge" --args --remote-debugging-port=9222 --user-data-dir="$HOME/.ocgo-browser-debug" https://opencode.ai 2>/dev/null || { echo NO_BROWSER; exit 2; }; echo OK'
+          // macOS:遍历常见 Chromium 系 .app(系统 + 用户目录),open -na 新实例传参
+          const apps = ['Google Chrome', 'Microsoft Edge', 'Brave Browser', 'Vivaldi', 'Opera', 'Arc', 'Chromium']
+          const chain = apps.map((a) =>
+            'open -na "' + a + '" --args --remote-debugging-port=9222 --user-data-dir="$HOME/.ocgo-browser-debug" https://opencode.ai 2>/dev/null'
+          ).join(' || ')
+          cmd = chain + ' || { echo NO_BROWSER; exit 2; }; echo OK'
         } else if (plat === 'linux') {
-          // Linux:nohup 后台脱离进程树;常见 Chromium 系可执行文件
-          cmd = 'B=$(command -v google-chrome-stable || command -v google-chrome || command -v chromium || command -v chromium-browser || command -v microsoft-edge || true); if [ -z "$B" ]; then echo NO_BROWSER; exit 2; fi; nohup "$B" --remote-debugging-port=9222 --user-data-dir="$HOME/.ocgo-browser-debug" https://opencode.ai >/dev/null 2>&1 & echo OK'
+          // Linux:nohup 后台脱离进程树;遍历常见 Chromium 系可执行文件
+          cmd = 'for B in google-chrome-stable google-chrome chromium chromium-browser microsoft-edge brave-browser vivaldi opera; do P=$(command -v $B 2>/dev/null) && { nohup "$P" --remote-debugging-port=9222 --user-data-dir="$HOME/.ocgo-browser-debug" https://opencode.ai >/dev/null 2>&1 & echo OK; exit 0; }; done; echo NO_BROWSER; exit 2'
         }
         if (cmd) {
           const spec = shell.resolve({ command: cmd, timeoutMs: 30000 })
@@ -828,11 +833,11 @@ return {
         // EncodedCommand 避免引号/括号被 shell 服务破坏;explorer 是用户桌面已有
         // 进程,派生的浏览器不属于 DSH 的进程树,不会被 shell 服务在命令结束后
         // 清理,窗口正常显示;且只用 core cmdlet,不受受限执行环境影响。
+        // 浏览器候选:Edge/Chrome/Brave/Vivaldi/Opera/Arc/Chromium 常见安装路径。
         const ps = [
-          "$edge='C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'",
-          "if(-not(Test-Path $edge)){ $edge='C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe' }",
-          "if(-not(Test-Path $edge)){ $edge='C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' }",
-          "if(-not(Test-Path $edge)){ Write-Output 'NO_BROWSER'; exit 2 }",
+          "$cands=@('C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe','C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe','C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe','C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe','C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe','C:\\Program Files\\Vivaldi\\Application\\vivaldi.exe','C:\\Program Files\\Opera\\launcher.exe',(Join-Path $env:LOCALAPPDATA 'Arc\\Application\\arc.exe'),(Join-Path $env:LOCALAPPDATA 'Chromium\\Application\\chrome.exe'))",
+          "$edge=$null; foreach($c in $cands){ if($c -and (Test-Path $c)){ $edge=$c; break } }",
+          "if(-not $edge){ Write-Output 'NO_BROWSER'; exit 2 }",
           "$bat=Join-Path $env:TEMP 'ocgo-launch.bat'",
           "'@echo off' | Set-Content $bat -Encoding ASCII",
           "'start \"\" \"' + $edge + '\" --remote-debugging-port=9222 \"--user-data-dir=%USERPROFILE%\\.ocgo-browser-debug\" https://opencode.ai' | Add-Content $bat -Encoding ASCII",

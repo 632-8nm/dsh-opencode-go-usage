@@ -2,6 +2,12 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.9] - 2026-08-16
+
+### 一键启动浏览器候选扩展
+- **Chromium 系全家桶**:Windows 遍历 Edge/Chrome/Brave/Vivaldi/Opera/Arc/Chromium 安装路径;macOS 按应用名遍历(系统+用户 Applications);Linux 自动探测常见可执行文件——不再只认 Chrome/Edge
+- macOS 用 `open -na`(launchd 启动,进程独立于 DSH),Linux 用 `nohup` 后台;Safari/Firefox 调试协议与 CDP 不兼容,README 已注明
+
 ## [1.6.8] - 2026-08-16
 
 ### 跨平台(数据通道全部脱离 PowerShell)

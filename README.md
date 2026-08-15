@@ -240,7 +240,9 @@ workspaceId 写入配置——**之后每次启动直接复用,无需再操作**
 - 通过浏览器调试协议读取 cookie,浏览器自身解密,**支持任何加密版本(含新版 v20)**,
   **无需关闭日常浏览器、无需管理员权限、不触碰数据库文件**
 - **跨平台**:Windows / macOS / Linux 全部支持(CDP 与平台无关;一键启动自动选择平台
-  浏览器:Windows=Edge/Chrome,macOS=Chrome/Edge(`open -na`),Linux=Chromium 系)
+  上已安装的 **Chromium 系浏览器**:Chrome / Edge / Brave / Vivaldi / Opera / Arc /
+  Chromium——macOS 用 `open -na`,Linux 自动探测可执行文件,Windows 遍历安装路径。
+  Safari / Firefox 的调试协议与 CDP 不兼容,无法用于自动提取)
 - 调试浏览器是独立 profile(`~/.ocgo-browser-debug`),登录一次长期有效;
   日常浏览器是否登录过 opencode.ai 都不影响
 - **手动粘贴兜底**:错误区仍可粘贴 `authCookie` 和 `workspaceId` 并保存
