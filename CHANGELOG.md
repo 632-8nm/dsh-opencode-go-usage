@@ -2,6 +2,13 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.3] - 2026-08-16
+
+### 性能(启动加载提速 ~300×)
+- **官方数据磁盘缓存**:抓取结果落盘 `~/.config/dsh-opencode-go-usage-official.json`,DSH 重启后首屏直接读盘,**0.1s 出数据**(此前每次启动都要全量分页 30s+)
+- **增量刷新**:缓存过期后只抓新增页(实测 1.5s / 12 条新增),python 端与旧缓存合并去重后写回;过期时先展示旧数据、后台刷新,面板不再长时间 loading
+- 磁盘缓存命中无需 cookie/网络;首次全量仍为 10-50s,之后全部秒级
+
 ## [1.6.2] - 2026-08-16
 
 ### 功能(调试端口 CDP 自动提取)

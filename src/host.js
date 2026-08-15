@@ -196,6 +196,22 @@ return {
       'PAGE_SIZE = 50',
       'UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/143.0.0.0 Safari/537.36"',
       'out = {"ok": False, "error": None, "records": [], "truncated": False, "autoExtracted": False, "browser": None}',
+      'DISK = os.path.join(HOME, ".config", "dsh-opencode-go-usage-official.json")',
+      'def load_disk_cache():',
+      '    # 官方抓取结果磁盘缓存(加速 DSH 重启后的首屏加载)',
+      '    try:',
+      '        with open(DISK, encoding="utf-8") as f: d = json.load(f)',
+      '        if isinstance(d, dict) and d.get("at") and isinstance(d.get("records"), list): return d',
+      '    except Exception:',
+      '        pass',
+      '    return None',
+      'def save_disk_cache(records):',
+      '    try:',
+      '        os.makedirs(os.path.dirname(DISK), exist_ok=True)',
+      '        with open(DISK, "w", encoding="utf-8") as f:',
+      '            json.dump({"at": int(time.time() * 1000), "records": records}, f, ensure_ascii=False)',
+      '    except Exception:',
+      '        pass',
       'def unprotect(blob):',
       '    class BLOB(ctypes.Structure):',
       '        _fields_ = [("cbData", wt.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]',
@@ -408,6 +424,16 @@ return {
       'if cfg:',
       '    CK = cfg.get("authCookie") or ""',
       '    WID = cfg.get("workspaceId") or ""',
+      '# 磁盘缓存命中(15 分钟内):直接返回,无需 cookie/网络——DSH 重启后首屏秒开',
+      'if not os.environ.get("OCGO_LAST_TS"):',
+      '    _d = load_disk_cache()',
+      '    if _d and int(time.time() * 1000) - _d["at"] < 15 * 60 * 1000:',
+      '        out["records"] = _d["records"]',
+      '        out["ok"] = True',
+      '        out["diskCached"] = True',
+      '        out["diskAt"] = _d["at"]',
+      '        print(json.dumps(out))',
+      '        raise SystemExit',
       'if not CK or not WID:',
       '    try:',
       '        CK = None',
@@ -458,7 +484,7 @@ return {
       '            time.sleep(0.8)',
       '    return None',
       'def parse_text(text):',
-      '    got = 0',
+      '    page = []',
       '    for b in re.findall(r\'\\{id:"usg_[^}]*?\\}\', text):',
       '        ts = re.search(r\'new Date\\("\' + r\'([^"]+)"\\)\', b)',
       '        model = re.search(r\'model:"([^"]+)"\', b)',
@@ -467,13 +493,13 @@ return {
       '        def num(p):',
       '            m = re.search(p, b)',
       '            return int(m.group(1)) if m else 0',
-      '        out["records"].append({"ts": ts.group(1), "model": model.group(1),',
+      '        page.append({"ts": ts.group(1), "model": model.group(1),',
       '            "ti": num(r\'inputTokens:(\\d+)\'), "to": num(r\'outputTokens:(\\d+)\'),',
       '            "rt": num(r\'reasoningTokens:(\\d+)\'), "cr": num(r\'cacheReadTokens:(\\d+)\'),',
       '            "cost": int(cost.group(1))})',
-      '        got += 1',
-      '    return got',
+      '    return page',
       'from concurrent.futures import ThreadPoolExecutor',
+      'LAST = os.environ.get("OCGO_LAST_TS") or ""',
       'try:',
       '    MAXP = int((cfg or {}).get("maxPages", 150)) if cfg else 150',
       '    page = 0',
@@ -485,12 +511,36 @@ return {
       '                if text is None:',
       '                    page = MAXP',
       '                    break',
-      '                got = parse_text(text)',
-      '                if got < PAGE_SIZE:',
+      '                pgs = parse_text(text)',
+      '                if not pgs:',
       '                    page = MAXP',
       '                    break',
+      '                if LAST:',
+      '                    # 增量:只保留比上次新的记录;本页时间已不新于上次即停止',
+      '                    out["records"].extend(r for r in pgs if r["ts"] > LAST)',
+      '                    if len(pgs) < PAGE_SIZE or pgs[-1]["ts"] <= LAST:',
+      '                        page = MAXP',
+      '                        break',
+      '                else:',
+      '                    out["records"].extend(pgs)',
+      '                    if len(pgs) < PAGE_SIZE:',
+      '                        page = MAXP',
+      '                        break',
       '                page = pg + 1',
       '            time.sleep(0.15)',
+      '    if LAST:',
+      '        # 增量模式:与磁盘旧缓存合并去重(新记录在前),结果仍为完整集',
+      '        _old = load_disk_cache()',
+      '        if _old and _old["records"]:',
+      '            _seen = set()',
+      '            _combined = []',
+      '            for r in out["records"] + _old["records"]:',
+      '                _k = (r["ts"], r["model"], r["cost"], r.get("ti", 0), r.get("to", 0), r.get("rt", 0), r.get("cr", 0))',
+      '                if _k in _seen: continue',
+      '                _seen.add(_k)',
+      '                _combined.append(r)',
+      '            out["records"] = _combined',
+      '    save_disk_cache(out["records"])',
       '    out["ok"] = True',
       '    out["truncated"] = len(out["records"]) >= MAXP * PAGE_SIZE',
       'except Exception as e:',
@@ -625,6 +675,39 @@ return {
 
     // 官方账户级用量(usage.list)。15 分钟缓存 + 并发去重:全量分页开销大,
     // 面板 60s 轮询不应反复触发;标注 truncated 表示页数超上限(数据截断)。
+    // 磁盘缓存(bundle 形态,注入 fs):DSH 重启后首屏直接读盘,避免每次启动
+    // 都全量分页(首次全量 10-50s);过期数据先展示,后台增量刷新只抓新增页。
+    function officialDiskPath() {
+      if (typeof _ocgoJoin !== 'function' || typeof _ocgoHomedir !== 'function') return null
+      return _ocgoJoin(_ocgoHomedir(), '.config', 'dsh-opencode-go-usage-official.json')
+    }
+    function toOfficialData(parsed) {
+      const rows = (parsed.records || []).map((r, i) => ({
+        id: 'of-' + i,
+        title: null,
+        model: r.model,
+        provider: 'official',
+        time: Date.parse(r.ts) || 0,
+        inputTokens: r.ti || 0,
+        outputTokens: r.to || 0,
+        reasoningTokens: r.rt || 0,
+        cacheReadTokens: r.cr || 0,
+        cacheWriteTokens: 0,
+        // usage.list 的 cost 单位为 1e-8 美元(实测与官网账单吻合)
+        costOfficial: (r.cost || 0) / 1e8,
+      }))
+      return { ok: true, vd: buildView(rows), rows, truncated: !!parsed.truncated, records: rows.length, autoExtracted: !!parsed.autoExtracted, browser: parsed.browser || null }
+    }
+    function readOfficialDisk() {
+      const p = officialDiskPath()
+      if (!p || typeof _ocgoReadFileSync !== 'function' || typeof _ocgoExistsSync !== 'function') return null
+      try {
+        if (!_ocgoExistsSync(p)) return null
+        const d = JSON.parse(_ocgoReadFileSync(p, 'utf8'))
+        if (d && d.at && Array.isArray(d.records)) return d
+      } catch (e) {}
+      return null
+    }
     let officialCache = null
     let officialInflight = null
     async function collectOfficial() {
@@ -641,21 +724,10 @@ return {
           const text = typeof raw === 'string' ? raw : (raw && raw.text != null ? String(raw.text) : '')
           const parsed = JSON.parse(text)
           if (!parsed.ok) return { ok: false, error: parsed.error || 'unknown' }
-          const rows = (parsed.records || []).map((r, i) => ({
-            id: 'of-' + i,
-            title: null,
-            model: r.model,
-            provider: 'official',
-            time: Date.parse(r.ts) || 0,
-            inputTokens: r.ti || 0,
-            outputTokens: r.to || 0,
-            reasoningTokens: r.rt || 0,
-            cacheReadTokens: r.cr || 0,
-            cacheWriteTokens: 0,
-            // usage.list 的 cost 单位为 1e-8 美元(实测与官网账单吻合)
-            costOfficial: (r.cost || 0) / 1e8,
-          }))
-          return { ok: true, vd: buildView(rows), rows, truncated: !!parsed.truncated, records: rows.length, autoExtracted: !!parsed.autoExtracted, browser: parsed.browser || null }
+          const data = toOfficialData(parsed)
+          // python 可能命中磁盘缓存(diskAt 为缓存时间戳,用它做内存缓存基准)
+          officialCache = { at: parsed.diskAt || Date.now(), data }
+          return data
         } catch (e) {
           return { ok: false, error: String((e && e.message) || e) }
         } finally {
@@ -664,7 +736,6 @@ return {
       })()
       try {
         const data = await officialInflight
-        officialCache = { at: Date.now(), data }
         // 后台拉取完成后,同步进已缓存响应;并用官方记录回填 DSH 金额(精确匹配)
         if (cache && cache.data) {
           cache.data.official = data
@@ -682,6 +753,46 @@ return {
       } finally {
         officialInflight = null
       }
+    }
+
+    // 增量刷新:磁盘缓存过期时只抓新增页(日常仅 1-3 页,秒级完成);
+    // python 端读旧盘合并去重后写回,host 同步更新内存缓存。
+    let incrementalInflight = null
+    function triggerIncremental() {
+      if (incrementalInflight) return incrementalInflight
+      const disk = readOfficialDisk()
+      if (!disk || !disk.records.length) return Promise.resolve()
+      const lastTs = disk.records.reduce((m, r) => (r.ts > m ? r.ts : m), '')
+      if (!lastTs) return Promise.resolve()
+      incrementalInflight = (async () => {
+        try {
+          const cmd = "$py='E:\\python\\python.exe';if(-not(Test-Path $py)){$c=Get-Command python -ErrorAction SilentlyContinue;if($c){$py=$c.Source}else{Write-Error 'python-not-found';exit 1}}; & $py -c \"import base64,os;os.environ['OCGO_LAST_TS']='" + lastTs + "';exec(base64.b64decode('" + OFFICIAL_PAYLOAD + "'))\""
+          const spec = shell.resolve({ command: cmd, timeoutMs: 240000, stdoutMaxBytes: 32 * 1024 * 1024 })
+          const result = await shell.run(spec)
+          const text = String(typeof result.stdout === 'string' ? result.stdout : (result.stdout && result.stdout.text != null ? result.stdout.text : ''))
+          const parsed = JSON.parse(text)
+          if (!parsed.ok) return
+          const data = toOfficialData(parsed)
+          officialCache = { at: Date.now(), data }
+          if (cache && cache.data) {
+            cache.data.official = data
+            if (data.ok && data.rows) {
+              collectDsh(data.rows).then((rows) => {
+                if (cache && cache.data) {
+                  const dv = buildView(rows)
+                  dv.matchedOfficial = rows.matchedOfficial || 0
+                  cache.data.dsh = dv
+                }
+              }).catch(() => {})
+            }
+          }
+        } catch (e) {
+          // 增量失败静默:旧数据仍可用,下次轮询再试
+        } finally {
+          incrementalInflight = null
+        }
+      })()
+      return incrementalInflight
     }
 
     // 保存官方凭据配置(bundle 形态用注入的 node:fs;动态沙箱无 fs → bundle-only)
@@ -705,8 +816,17 @@ return {
       if (inflight) return inflight
       inflight = (async () => {
         // DSH 会话分析 + 官方配额并行;官方明细不阻塞面板——
-        // 有缓存直接带出,无缓存先返回 loading 并在后台拉取(首次全量约 10-50s)
-        const off = officialCache ? officialCache.data : null
+        // 内存/磁盘缓存直接带出(过期也先展示,后台增量刷新);
+        // 无任何缓存才返回 loading 并在后台全量拉取(首次 10-50s,之后落盘)
+        let off = officialCache ? officialCache.data : null
+        if (!off) {
+          const disk = readOfficialDisk()
+          if (disk) {
+            off = toOfficialData(disk)
+            officialCache = { at: disk.at, data: off }
+            if (Date.now() - disk.at >= 15 * 60 * 1000) triggerIncremental().catch(() => {})
+          }
+        }
         const [dshRows, quota] = await Promise.all([
           collectDsh(off && off.ok && off.rows ? off.rows : null).catch(() => []),
           collectQuota().catch(() => ({ error: 'quota 异常' })),
