@@ -394,8 +394,11 @@ return {
           const savedLang = window.localStorage.getItem(LS_LANG)
           if (savedLang === 'zh' || savedLang === 'en') return savedLang
         } catch (e) { /* storage unavailable */ }
-        const id = (localeSvc && typeof localeSvc.getLocale === 'function' && localeSvc.getLocale().id) || ''
-        return /^zh/i.test(String(id)) ? 'zh' : 'en'
+        try {
+          const id = (localeSvc && typeof localeSvc.getLocale === 'function' && localeSvc.getLocale().id) || ''
+          return /^zh/i.test(String(id)) ? 'zh' : 'en'
+        } catch (e) { /* locale unavailable */ }
+        return 'zh'
       })
       React.useEffect(() => {
         if (!localeSvc || typeof localeSvc.subscribe !== 'function') return
