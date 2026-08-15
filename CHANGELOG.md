@@ -2,6 +2,12 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.7] - 2026-08-16
+
+### 跨平台(一键启动支持 macOS / Linux)
+- **一键启动调试浏览器增加 macOS / Linux 分支**:macOS 用 `open -na`(Chrome 优先,回退 Edge),Linux 用 `nohup` 后台启动(google-chrome / chromium / microsoft-edge 自动探测);Windows 保持 explorer 中转方案
+- **macOS 不再有 DPAPI 问题**:cookie 库直读(DPAPI/AES-GCM,Windows 专属)已在 1.6.4 移除,自动提取统一走调试端口 CDP——CDP 与平台无关,任何加密版本(v10/v20)都能提取
+
 ## [1.6.6] - 2026-08-16
 
 ### 修复(首屏数据完整性与一键启动可靠性)
