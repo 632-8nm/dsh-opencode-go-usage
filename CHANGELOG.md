@@ -2,6 +2,12 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.8] - 2026-08-16
+
+### 跨平台(数据通道全部脱离 PowerShell)
+- **配额通道跨平台**:curl 通道在 macOS/Linux 用 `python3` 一行读取 key + 原生 curl;python 兜底通道统一走 `buildPythonCmd`(`python3`/`python` 自动探测),不再依赖 Windows 专属的 pwsh 语法与 `E:\python\python.exe` 硬编码
+- **主数据源(runOfficial)同步跨平台**:usage.list 抓取/增量/磁盘缓存命中全部通过 `buildPythonCmd` 生成平台对应命令(macOS/Linux 走 sh,Windows 行为不变)
+
 ## [1.6.7] - 2026-08-16
 
 ### 跨平台(一键启动支持 macOS / Linux)
