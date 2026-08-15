@@ -188,7 +188,7 @@ return {
     // 运行时数据库被锁则返回 EDGE_RUNNING,由面板引导手动粘贴或关闭 Edge。
     // 返回逐请求官方计费明细(cost 单位 1e-8 美元),账户级、跨设备,与官网账单一致。
     const OFFICIAL_SCRIPT = [
-      'import json, os, re, time, urllib.request, urllib.parse, base64, shutil, tempfile, sqlite3, ctypes, ctypes.wintypes as wt',
+      'import json, os, re, time, urllib.request, urllib.parse, base64',
       'HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or r"C:\\Users\\Xenia"',
       'CFG = os.path.join(HOME, ".config", "dsh-opencode-go-usage.json")',
       'FID = "bfd684bfc2e4eed05cd0b518f5e4eafd3f3376e3938abb9e536e7c03df831e5c"',
@@ -212,110 +212,6 @@ return {
       '            json.dump({"at": int(time.time() * 1000), "records": records}, f, ensure_ascii=False)',
       '    except Exception:',
       '        pass',
-      'def unprotect(blob):',
-      '    class BLOB(ctypes.Structure):',
-      '        _fields_ = [("cbData", wt.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]',
-      '    inb = BLOB(len(blob), ctypes.cast(ctypes.create_string_buffer(blob), ctypes.POINTER(ctypes.c_char)))',
-      '    outb = BLOB()',
-      '    if not ctypes.windll.crypt32.CryptUnprotectData(ctypes.byref(inb), None, None, None, None, 0, ctypes.byref(outb)):',
-      '        raise RuntimeError("DPAPI unprotect failed")',
-      '    data = ctypes.string_at(outb.pbData, outb.cbData)',
-      '    ctypes.windll.kernel32.LocalFree(outb.pbData)',
-      '    return data',
-      'def chromium_cookie(root, AESGCM, unprotect):',
-      '    # Chromium 系(v10:DPAPI + AES-GCM);返回 auth cookie 或 None;',
-      '    # LOCKED=数据库被浏览器占用,V20=新版加密暂不支持',
-      '    ls_path = os.path.join(root, "Local State")',
-      '    if not os.path.exists(ls_path): return None',
-      '    ls = json.load(open(ls_path, encoding="utf-8"))',
-      '    ek = base64.b64decode((ls.get("os_crypt") or {}).get("encrypted_key") or "")',
-      '    if not ek.startswith(b"DPAPI"): return None',
-      '    key = unprotect(ek[5:])',
-      '    tmp = os.path.join(tempfile.gettempdir(), "ocgo-cookies-copy.db")',
-      '    for prof in ["Default"] + ["Profile %d" % i for i in range(1, 30)]:',
-      '        db = os.path.join(root, prof, "Network", "Cookies")',
-      '        if not os.path.exists(db): continue',
-      '        rows = None',
-      '        try:',
-      '            con = sqlite3.connect("file:" + db.replace(chr(92), "/") + "?mode=ro", uri=True)',
-      '            rows = con.execute("SELECT encrypted_value FROM cookies WHERE host_key LIKE \'%opencode.ai%\' AND name = \'auth\'").fetchall()',
-      '            con.close()',
-      '        except Exception:',
-      '            try:',
-      '                shutil.copy2(db, tmp)',
-      '                con = sqlite3.connect("file:" + tmp.replace(chr(92), "/") + "?mode=ro", uri=True)',
-      '                rows = con.execute("SELECT encrypted_value FROM cookies WHERE host_key LIKE \'%opencode.ai%\' AND name = \'auth\'").fetchall()',
-      '                con.close()',
-      '            except Exception:',
-      '                raise RuntimeError("LOCKED")',
-      '        for (ev,) in (rows or []):',
-      '            if ev[:3] == b"v10" and len(ev) > 15:',
-      '                try:',
-      '                    val = AESGCM(key[:16]).decrypt(ev[3:15], ev[15:], None).decode("utf-8")',
-      '                    if val.startswith("Fe26.2"): return val',
-      '                except Exception:',
-      '                    continue',
-      '            elif ev[:3] == b"v20":',
-      '                raise RuntimeError("V20")',
-      '    return None',
-      'def firefox_cookie(root, AESGCM):',
-      '    # Firefox 的 cookies.sqlite 明文存储,无需解密',
-      '    tmp = os.path.join(tempfile.gettempdir(), "ocgo-ff-cookies.sqlite")',
-      '    for prof in glob.glob(os.path.join(root, "*.default*")) + glob.glob(os.path.join(root, "*.release")):',
-      '        db = os.path.join(prof, "cookies.sqlite")',
-      '        if not os.path.exists(db): continue',
-      '        rows = None',
-      '        try:',
-      '            con = sqlite3.connect("file:" + db.replace(chr(92), "/") + "?mode=ro", uri=True)',
-      '            rows = con.execute("SELECT value FROM moz_cookies WHERE baseDomain LIKE \'%opencode.ai%\' AND name = \'auth\'").fetchall()',
-      '            con.close()',
-      '        except Exception:',
-      '            try:',
-      '                shutil.copy2(db, tmp)',
-      '                con = sqlite3.connect("file:" + tmp.replace(chr(92), "/") + "?mode=ro", uri=True)',
-      '                rows = con.execute("SELECT value FROM moz_cookies WHERE baseDomain LIKE \'%opencode.ai%\' AND name = \'auth\'").fetchall()',
-      '                con.close()',
-      '            except Exception:',
-      '                raise RuntimeError("LOCKED")',
-      '        for (v,) in (rows or []):',
-      '            if isinstance(v, str) and v.startswith("Fe26.2"): return v',
-      '    return None',
-      'def extract_cookie():',
-      '    # 遍历主流浏览器(Edge/Chrome/Chromium/Brave/Vivaldi/Arc/Opera/Firefox),',
-      '    # 返回 (auth_cookie, 浏览器名);失败抛 BROWSER_RUNNING / NO_LOGIN / NO_BROWSER / V20',
-      '    try:',
-      '        from cryptography.hazmat.primitives.ciphers.aead import AESGCM',
-      '    except Exception:',
-      '        raise RuntimeError("NO_CRYPTO")',
-      '    la = os.environ.get("LOCALAPPDATA") or os.path.join(HOME, "AppData", "Local")',
-      '    ra = os.environ.get("APPDATA") or os.path.join(HOME, "AppData", "Roaming")',
-      '    browsers = [',
-      '        ("Edge", os.path.join(la, "Microsoft", "Edge", "User Data"), "chromium"),',
-      '        ("Chrome", os.path.join(la, "Google", "Chrome", "User Data"), "chromium"),',
-      '        ("Chromium", os.path.join(la, "Chromium", "User Data"), "chromium"),',
-      '        ("Brave", os.path.join(la, "BraveSoftware", "Brave-Browser", "User Data"), "chromium"),',
-      '        ("Vivaldi", os.path.join(la, "Vivaldi", "User Data"), "chromium"),',
-      '        ("Arc", os.path.join(la, "Arc", "User Data"), "chromium"),',
-      '        ("Opera", os.path.join(ra, "Opera Software", "Opera Stable"), "chromium"),',
-      '        ("Firefox", os.path.join(ra, "Mozilla", "Firefox", "Profiles"), "firefox"),',
-      '    ]',
-      '    seen_any = False',
-      '    locked = False',
-      '    for name, root, kind in browsers:',
-      '        if not os.path.exists(root): continue',
-      '        seen_any = True',
-      '        try:',
-      '            if kind == "firefox":',
-      '                val = firefox_cookie(root, AESGCM)',
-      '            else:',
-      '                val = chromium_cookie(root, AESGCM, unprotect)',
-      '            if val: return val, name',
-      '        except RuntimeError as e:',
-      '            if str(e) == "LOCKED": locked = True',
-      '            elif str(e) == "V20": raise RuntimeError("V20")',
-      '    if locked: raise RuntimeError("BROWSER_RUNNING")',
-      '    if not seen_any: raise RuntimeError("NO_BROWSER")',
-      '    raise RuntimeError("NO_LOGIN")',
       'def ws_connect(host, port, path):',
       '    # 最小 WebSocket 客户端(标准库 socket,零依赖):握手返回 socket',
       '    import socket as _sk, base64 as _b64',
@@ -438,7 +334,7 @@ return {
       '    try:',
       '        CK = None',
       '        src_browser = None',
-      '        # 1) 调试端口 CDP(浏览器自身解密,v20 也可用)',
+      '        # 1) 调试端口 CDP(浏览器自身解密,v20 也可用)——唯一自动提取通道',
       '        for port in (9222, 9223, 9224, 9225, 9226, 9227, 9228, 9229, 9230):',
       '            try:',
       '                CK = cdp_fetch_cookie(port)',
@@ -447,9 +343,8 @@ return {
       '            if CK:',
       '                src_browser = "CDP:%d" % port',
       '                break',
-      '        # 2) 浏览器 cookie 库直读(v10 / Firefox;v20 不可用)',
-      '        if not CK:',
-      '            CK, src_browser = extract_cookie()',
+      '        # 调试浏览器未启动/未登录 → 引导一键启动(面板按钮)',
+      '        if not CK: raise RuntimeError("NO_BROWSER")',
       '        WID = fetch_workspace_id(CK)',
       '        if not WID: raise RuntimeError("WS_PARSE_FAIL")',
       '        try:',
@@ -462,7 +357,7 @@ return {
       '            pass',
       '    except Exception as e:',
       '        code = str(e)',
-      '        out["error"] = code if code in ("BROWSER_RUNNING", "NO_BROWSER", "NO_LOGIN", "NO_CRYPTO", "V20", "WS_PARSE_FAIL") else repr(e)[:200]',
+      '        out["error"] = code if code in ("NO_BROWSER", "WS_PARSE_FAIL") else repr(e)[:200]',
       '        print(json.dumps(out))',
       '        raise SystemExit',
       'def fetch_text(page):',
@@ -845,6 +740,24 @@ return {
       }
     }
 
+    // 一键启动调试浏览器(独立 profile + 调试端口 9222,不影响日常浏览器):
+    // 用户登录一次后关闭窗口,插件即可通过 CDP 自动提取。不等待浏览器退出。
+    async function launchDebugBrowser() {
+      try {
+        if (typeof shell === 'undefined' || !shell || typeof shell.resolve !== 'function') {
+          return { ok: false, error: 'shell 不可用' }
+        }
+        const ps = "& { $edge='C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'; if(-not(Test-Path $edge)){ $edge='C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe' }; if(-not(Test-Path $edge)){ $edge='C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' }; if(-not(Test-Path $edge)){ Write-Output 'NO_BROWSER'; exit 2 }; $ud=Join-Path $env:USERPROFILE '.ocgo-browser-debug'; Start-Process $edge -ArgumentList '--remote-debugging-port=9222',('--user-data-dir='+$ud),'https://opencode.ai'; Write-Output 'OK'; exit 0 }"
+        const spec = shell.resolve({ command: 'powershell -NoProfile -NonInteractive -Command "' + ps + '"', timeoutMs: 60000 })
+        const result = await shell.run(spec)
+        const text = String(typeof result.stdout === 'string' ? result.stdout : (result.stdout && result.stdout.text != null ? result.stdout.text : ''))
+        if (result.exitCode !== 0 || !/OK/.test(text)) return { ok: false, error: 'NO_BROWSER' }
+        return { ok: true }
+      } catch (e) {
+        return { ok: false, error: String((e && e.message) || e) }
+      }
+    }
+
     const serve = async () => {
       try {
         return await fetchAll()
@@ -856,6 +769,7 @@ return {
     const harnessApi = (typeof harness !== 'undefined' && harness) ? harness : null
     if (harnessApi && typeof harnessApi.handle === 'function') {
       ctx.effect(() => harnessApi.handle('ocgo-usage:fetch', serve))
+      ctx.effect(() => harnessApi.handle('ocgo-usage:launch-browser', launchDebugBrowser))
     }
     // bundle 模式没有 harness 桥:改走 webServer 的本地 HTTP 路由,
     // 客户端同源 fetch('/ocgo-usage/fetch') 取数,两种加载模式都可用。
@@ -889,6 +803,22 @@ return {
               throw new Error('需要 authCookie 和 workspaceId')
             }
             const r = saveOfficialConfig({ authCookie: cfg.authCookie.trim(), workspaceId: cfg.workspaceId.trim() })
+            res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify(r))
+          } catch (e) {
+            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ ok: false, error: String((e && e.message) || e) }))
+          }
+        },
+      }))
+      // 一键启动调试浏览器:POST → 弹出独立调试窗口(登录用),不等待退出
+      ctx.effect(() => ws.register({
+        kind: 'exact',
+        path: '/ocgo-usage/launch-browser',
+        handler: async (req, res) => {
+          try {
+            if (req.method !== 'POST') { res.writeHead(405); res.end(); return }
+            const r = await launchDebugBrowser()
             res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' })
             res.end(JSON.stringify(r))
           } catch (e) {

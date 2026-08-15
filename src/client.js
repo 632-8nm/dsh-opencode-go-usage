@@ -22,12 +22,12 @@ return {
         'view.official': '官方',
         'official.err': '官方数据不可用: {e}',
         'official.loading': '官方数据拉取中(首次约 10-30 秒)…',
-        'official.errRunning': '浏览器正在运行,cookie 库被锁定。关闭浏览器后刷新即可自动提取;或用调试模式启动浏览器(scripts/start-browser-debug.bat,v20 加密也支持)。也可手动粘贴下方凭据。',
-        'official.errNoLogin': '未在支持的浏览器(Edge/Chrome/Firefox 等)中找到 opencode.ai 登录态,请先在浏览器登录 opencode.ai 后重试。',
-        'official.errNoBrowser': '未找到支持的浏览器(Edge/Chrome/Chromium/Brave/Vivaldi/Arc/Opera/Firefox)。可手动粘贴下方凭据。',
-        'official.errNoCrypto': '缺少 python cryptography 库(运行 pip install cryptography)。',
-        'official.errV20': '浏览器 cookie 使用新版加密(v20),暂不支持自动提取。可手动粘贴下方凭据。',
+        'official.errNoBrowser': '未找到调试浏览器(端口 9222-9230)。点下方按钮一键启动调试浏览器并在窗口内登录 opencode.ai,关闭窗口后刷新即可自动提取。也可手动粘贴下方凭据。',
         'official.errWs': '无法解析 workspaceId(cookie 可能已过期,请重新登录 opencode.ai)。',
+        'official.launch': '🚀 一键启动调试浏览器并登录',
+        'official.launching': '正在启动浏览器…',
+        'official.launched': '调试浏览器已弹出:登录 opencode.ai 后关闭窗口,再点刷新(以后免登录,长期有效)',
+        'official.launchFail': '启动失败: {e}',
         'official.paste': '手动粘贴凭据(可选):',
         'official.cookiePh': 'auth cookie(F12 → Application → Cookies → auth)',
         'official.widPh': 'workspaceId(usage 页面地址栏 wrk_xxx)',
@@ -38,6 +38,7 @@ return {
         'foot.officialTrunc': '官方数据截断(仅最近 7500 条)',
         'srcs.title': '数据源',
         'src.quota': '配额 API',
+        'src.degraded': 'DSH 会话(官方明细不可用)',
         'stat.today': '今日',
         'stat.month': '本月',
         'stat.total': '累计',
@@ -106,12 +107,12 @@ return {
         'view.official': 'Official',
         'official.err': 'Official data unavailable: {e}',
         'official.loading': 'Fetching official data (first pull ~10-30s)…',
-        'official.errRunning': 'A browser is running and its cookie database is locked. Close it and refresh to auto-extract; or launch the browser in debug mode (scripts/start-browser-debug.bat, works with v20 too). You can also paste credentials below.',
-        'official.errNoLogin': 'No opencode.ai login found in supported browsers (Edge/Chrome/Firefox etc). Sign in to opencode.ai first.',
-        'official.errNoBrowser': 'No supported browser found (Edge/Chrome/Chromium/Brave/Vivaldi/Arc/Opera/Firefox). You can paste credentials below.',
-        'official.errNoCrypto': 'Python cryptography missing (run: pip install cryptography).',
-        'official.errV20': 'Browser cookies use the new v20 encryption, auto-extract unsupported yet. Please paste credentials below.',
+        'official.errNoBrowser': 'No debug browser found (ports 9222-9230). Click the button below to launch the debug browser, sign in to opencode.ai in the window, close it, then refresh — auto-extract. You can also paste credentials below.',
         'official.errWs': 'Cannot resolve workspaceId (cookie may be expired — sign in to opencode.ai again).',
+        'official.launch': '🚀 Launch debug browser & sign in',
+        'official.launching': 'Launching browser…',
+        'official.launched': 'Debug browser opened: sign in to opencode.ai, close the window, then refresh (no login needed afterwards)',
+        'official.launchFail': 'Launch failed: {e}',
         'official.paste': 'Paste credentials (optional):',
         'official.cookiePh': 'auth cookie (F12 → Application → Cookies → auth)',
         'official.widPh': 'workspaceId (wrk_xxx from usage page URL)',
@@ -122,6 +123,7 @@ return {
         'foot.officialTrunc': 'Official data truncated (recent 7500 only)',
         'srcs.title': 'Sources',
         'src.quota': 'Quota API',
+        'src.degraded': 'DSH session (official unavailable)',
         'stat.today': 'Today',
         'stat.month': 'This month',
         'stat.total': 'Total',
@@ -389,6 +391,7 @@ return {
       const [cfgAuth, setCfgAuth] = React.useState('')
       const [cfgWid, setCfgWid] = React.useState('')
       const [cfgSaving, setCfgSaving] = React.useState(false)
+      const [launching, setLaunching] = React.useState(false)
       const [cfgMsg, setCfgMsg] = React.useState(null)
       // 语言:本地记忆优先,否则跟随 DSH 全局 locale(未手动选择时订阅其变化)
       const [lang, setLang] = React.useState(() => {
@@ -481,6 +484,24 @@ return {
           setCfgMsg(String((e && e.message) || e))
         }
         setCfgSaving(false)
+      }
+
+      // 一键启动调试浏览器并登录(动态走 harness 桥;bundle 走本地路由)
+      async function launchBrowser() {
+        setLaunching(true)
+        try {
+          let r
+          if (typeof host !== 'undefined' && host && typeof host.call === 'function') {
+            r = await host.call('ocgo-usage:launch-browser')
+          } else {
+            const res = await fetch('/ocgo-usage/launch-browser', { method: 'POST' })
+            r = await res.json()
+          }
+          setCfgMsg(r && r.ok ? t('official.launched') : t('official.launchFail', { e: (r && r.error) || 'failed' }))
+        } catch (e) {
+          setCfgMsg(t('official.launchFail', { e: String((e && e.message) || e) }))
+        }
+        setLaunching(false)
       }
 
       // 导出 CSV:统计 + 配额 + 按模型 + 最近会话(当前视图)
@@ -624,7 +645,10 @@ return {
 
       const d = state.data
       const official = d && d.official
-      const vd = (view === 'dsh' ? (d && d.dsh) : (official && official.ok ? official.vd : null)) || null
+      const dshVd = d && d.dsh
+      const officialVd = official && official.ok ? official.vd : null
+      // 官方明细不可用时,官方视图降级显示 DSH 会话数据(配额始终来自独立接口,不受影响)
+      const vd = (view === 'dsh' ? dshVd : (officialVd || dshVd)) || null
       const total = vd ? vd.total : null
       const pct = (v) => (v == null ? null : Math.round(v))
       const qz = d && d.quota
@@ -670,33 +694,6 @@ return {
           React.createElement('div', null, t('err.title')),
           React.createElement('div', null, state.error)
         ))
-      } else if (view !== 'dsh' && official && official.loading) {
-        // 官方数据后台拉取中
-        body.push(React.createElement('div', { key: 'ol', className: 'ocgo-loading' }, t('official.loading')))
-      } else if (view !== 'dsh' && official && !official.ok) {
-        const ec = official.error
-        const friendly = ec === 'BROWSER_RUNNING' ? t('official.errRunning')
-          : ec === 'NO_LOGIN' ? t('official.errNoLogin')
-          : ec === 'NO_BROWSER' ? t('official.errNoBrowser')
-          : ec === 'NO_CRYPTO' ? t('official.errNoCrypto')
-          : ec === 'V20' ? t('official.errV20')
-          : ec === 'WS_PARSE_FAIL' ? t('official.errWs')
-          : t('official.err', { e: official.error || 'unknown' })
-        const inputStyle = { flex: 1, minWidth: 0, background: 'var(--dsw-alias-bg-layer-2)', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 6, padding: '4px 6px', color: 'var(--dsw-alias-label-primary)', fontSize: 11 }
-        body.push(React.createElement('div', { key: 'oe', className: 'ocgo-err' },
-          React.createElement('div', null, friendly),
-          React.createElement('div', { style: { fontSize: 10, opacity: .8 } }, '~/.config/dsh-opencode-go-usage.json'),
-          React.createElement('div', { className: 'ocgo-viewrow', style: { marginTop: 4 } },
-            React.createElement('input', { value: cfgAuth, onChange: (e) => setCfgAuth(e.target.value), placeholder: t('official.cookiePh'), style: inputStyle })
-          ),
-          React.createElement('div', { className: 'ocgo-viewrow' },
-            React.createElement('input', { value: cfgWid, onChange: (e) => setCfgWid(e.target.value), placeholder: t('official.widPh'), style: inputStyle })
-          ),
-          React.createElement('div', { className: 'ocgo-viewrow' },
-            React.createElement('button', { className: 'ocgo-seg-btn', onClick: saveCfg, disabled: cfgSaving, style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 6, color: 'var(--dsw-alias-label-primary)' } }, cfgSaving ? t('official.saved') : t('official.save')),
-            cfgMsg ? React.createElement('span', { style: { fontSize: 10 } }, cfgMsg) : null
-          )
-        ))
       } else if (vd) {
         body.push(React.createElement('div', { key: 'views', className: 'ocgo-viewrow' },
           React.createElement('div', { className: 'ocgo-seg' },
@@ -705,10 +702,39 @@ return {
           ),
           React.createElement('span', { className: 'ocgo-spacer' })
         ))
+        // 官方明细状态横幅(不阻塞主体:配额/DSH 数据照常显示)
+        if (view !== 'dsh' && official) {
+          if (official.loading) {
+            body.push(React.createElement('div', { key: 'of-status', className: 'ocgo-src miss' }, t('official.loading')))
+          } else if (!official.ok) {
+            const ec = official.error
+            const friendly = ec === 'NO_BROWSER' ? t('official.errNoBrowser')
+              : ec === 'WS_PARSE_FAIL' ? t('official.errWs')
+              : t('official.err', { e: official.error || 'unknown' })
+            const inputStyle = { flex: 1, minWidth: 0, background: 'var(--dsw-alias-bg-layer-2)', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 6, padding: '4px 6px', color: 'var(--dsw-alias-label-primary)', fontSize: 11 }
+            body.push(React.createElement('div', { key: 'of-status', className: 'ocgo-err' },
+              React.createElement('div', null, friendly),
+              React.createElement('div', { className: 'ocgo-viewrow', style: { marginTop: 6 } },
+                React.createElement('button', { className: 'ocgo-seg-btn', onClick: launchBrowser, disabled: launching, style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 6, color: 'var(--dsw-alias-label-primary)' } }, launching ? t('official.launching') : t('official.launch')),
+                cfgMsg ? React.createElement('span', { style: { fontSize: 10 } }, cfgMsg) : null
+              ),
+              React.createElement('div', { style: { fontSize: 10, opacity: .8 } }, '~/.config/dsh-opencode-go-usage.json'),
+              React.createElement('div', { className: 'ocgo-viewrow', style: { marginTop: 4 } },
+                React.createElement('input', { value: cfgAuth, onChange: (e) => setCfgAuth(e.target.value), placeholder: t('official.cookiePh'), style: inputStyle })
+              ),
+              React.createElement('div', { className: 'ocgo-viewrow' },
+                React.createElement('input', { value: cfgWid, onChange: (e) => setCfgWid(e.target.value), placeholder: t('official.widPh'), style: inputStyle })
+              ),
+              React.createElement('div', { className: 'ocgo-viewrow' },
+                React.createElement('button', { className: 'ocgo-seg-btn', onClick: saveCfg, disabled: cfgSaving, style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 6, color: 'var(--dsw-alias-label-primary)' } }, cfgSaving ? t('official.saved') : t('official.save'))
+              )
+            ))
+          }
+        }
         body.push(React.createElement('div', { key: 'srcs', className: 'ocgo-viewrow' },
           view === 'dsh'
             ? React.createElement('span', { className: 'ocgo-src ok' }, 'DSH 会话')
-            : React.createElement('span', { className: 'ocgo-src ok' }, 'usage.list'),
+            : React.createElement('span', { className: 'ocgo-src ' + (officialVd ? 'ok' : 'miss') }, officialVd ? 'usage.list' : t('src.degraded')),
           React.createElement('span', { className: 'ocgo-src ' + (d.quota && !d.quotaError ? 'ok' : 'miss'), title: d.quotaError || '' }, t('src.quota'))
         ))
         // 环比:今日 vs 昨日(by_day 末项为今天,前一项为昨天)

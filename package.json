@@ -1,6 +1,6 @@
 ﻿{
   "name": "dsh-opencode-go-usage",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "description": "OpenCode Go 鐢ㄩ噺涓庤姳璐归潰鏉?鈥?DeepSeek Harness 鎻掍欢:鍙嫋鎷界缉鏀剧殑鎮诞浠〃鐩?瀹炴椂灞曠ず OpenCode Go 閰嶉銆侀€愯姹傜敤閲忎笌鑺辫垂",
   "license": "MIT",
   "type": "module",
@@ -44,3 +44,4 @@
     "billing"
   ]
 }
+
