@@ -1,25 +1,27 @@
 @echo off
 rem ============================================================
-rem  OpenCode Go 用量面板 - 浏览器调试模式启动器
+rem  OpenCode Go Usage Panel - Browser debug launcher
 rem
-rem  以调试端口(9222)启动 Edge 的独立配置(不影响日常 Edge),
-rem  插件通过 CDP 自动读取 opencode.ai 登录 cookie(v20 加密也支持)。
+rem  Starts Edge with remote debugging port 9222 using an
+rem  isolated profile (does not affect your daily Edge).
+rem  The plugin reads the opencode.ai auth cookie via CDP
+rem  (v20 encryption supported).
 rem
-rem  首次使用:启动后在新窗口登录一次 opencode.ai,之后长期有效。
-rem  注意:调试端口开启期间,本机其它程序可读取该窗口的浏览数据,
-rem        用完建议关闭本窗口(调试端口随之关闭)。
+rem  First run: log in to opencode.ai once in the new window.
+rem  Security: while the debug port is open, other local
+rem  programs can access this window's browsing data;
+rem  close the window when done.
 rem ============================================================
 
 set "EDGE=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 if not exist "%EDGE%" set "EDGE=C:\Program Files\Microsoft\Edge\Application\msedge.exe"
 if not exist "%EDGE%" (
-    echo 未找到 Edge,请修改本脚本中的 EDGE 路径,或改用 Chrome:
-    echo 用 Chrome 时把 EDGE 改为 C:\Program Files\Google\Chrome\Application\chrome.exe
+    echo Edge not found. Edit EDGE path in this script, or use Chrome:
+    echo e.g. set EDGE=C:\Program Files\Google\Chrome\Application\chrome.exe
     pause
     exit /b 1
 )
 
 start "" "%EDGE%" --remote-debugging-port=9222 "--user-data-dir=%USERPROFILE%\.ocgo-browser-debug" https://opencode.ai
-echo 已启动调试模式 Edge(端口 9222)。
-echo 首次请登录 opencode.ai,之后关闭本窗口即可。
-timeout /t 5 >nul
+echo Debug Edge started (port 9222).
+echo If this is the first run, log in to opencode.ai in the new window, then close it.
