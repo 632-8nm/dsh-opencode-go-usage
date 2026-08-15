@@ -439,6 +439,8 @@ return {
       React.useEffect(() => {
         let alive = true
         let inFlight = false
+        let fastTimer = null
+        const stopFast = () => { if (fastTimer) { try { fastTimer() } catch (e) { /* timer may be gone */ } fastTimer = null } }
         async function load() {
           if (inFlight) return
           inFlight = true
@@ -456,10 +458,22 @@ return {
             if (r && r.ok) {
               setState({ loading: false, data: r, error: null })
               setStamp(Date.now())
+              // 官方明细未就绪(首次全量 10-15s 后台拉取)时 15s 快速轮询,
+              // 就绪后恢复 60s 常规轮询
+              const of = r.official
+              if (open && of && !of.ok) {
+                if (!fastTimer && timer && typeof timer.setTimeout === 'function') {
+                  fastTimer = timer.setTimeout(() => { fastTimer = null; if (alive) load() }, 15000)
+                }
+              } else {
+                stopFast()
+              }
             } else {
+              stopFast()
               setState({ loading: false, data: null, error: (r && r.error) || 'unknown error' })
             }
           } catch (e) {
+            stopFast()
             if (alive) setState({ loading: false, data: null, error: String((e && e.message) || e) })
           } finally {
             inFlight = false
@@ -469,7 +483,7 @@ return {
         // 只在面板打开时轮询:关闭状态不发起全量聚合(会话扫描 + python + curl 开销大)
         let disposer = null
         if (open && timer) disposer = timer.interval(load, 60000)
-        return () => { alive = false; if (disposer) disposer() }
+        return () => { alive = false; stopFast(); if (disposer) disposer() }
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [tick, open])
 
