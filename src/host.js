@@ -739,7 +739,9 @@ return {
           scanP = collectDshScan().catch(() => [])
         }
         const quotaP = collectQuota().catch(() => ({ error: 'quota 异常' }))
-        let off = officialCache ? officialCache.data : null
+        // 内存缓存必须检查 15min 过期:否则一旦设置就永远用旧数据,
+        // 增量刷新永远不会再触发,金额/记录"卡住不动"。
+        let off = officialCache && Date.now() - officialCache.at < 15 * 60 * 1000 ? officialCache.data : null
         if (!off) {
           const disk = readOfficialDisk()
           if (disk) {
