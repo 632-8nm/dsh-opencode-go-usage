@@ -216,13 +216,15 @@ DSH 会话事件没有官方 cost,先用官方定价估算(cache 按会话增量
 的 reconcile 步骤),然后重启 DSH。重启后 host 路由与右下角 FAB 自动出现。
 
 **官方视图怎么配置?**
-面板"官方"视图直接调官网 `usage.list` 接口(账户级逐请求计费,与官网账单一致),凭据获取**全自动**:
+面板"官方"视图直接调官网 `usage.list` 接口(账户级逐请求计费,与官网账单一致),凭据获取**全自动,任意浏览器**:
 
-1. **零操作(推荐)**:用 Edge 登录过 `opencode.ai` 即可——插件会自动从 Edge 的 cookie 库提取 `auth` cookie 并解析 workspaceId(DPAPI + AES-GCM 解密,全部本机处理)。Edge 正在运行时会提示"关闭 Edge 后刷新",关闭后自动完成
+1. **零操作(推荐)**:只要用 **Edge / Chrome / Chromium / Brave / Vivaldi / Arc / Opera / Firefox** 任一浏览器登录过 `opencode.ai`,插件自动从浏览器 cookie 库提取 `auth` cookie 并解析 workspaceId(Chromium 系 DPAPI + AES-GCM 解密,Firefox 明文直读,全部本机处理)。浏览器正在运行时会提示"关闭浏览器后刷新",关闭后自动完成
 2. **手动兜底**:面板官方视图的错误区可直接粘贴 `authCookie` 和 `workspaceId` 并保存
    - cookie:浏览器 F12 → Application → Cookies → 复制 `auth` 值
    - workspaceId:打开 `https://opencode.ai/workspace/<你的工作区>/usage`,地址栏里的 `wrk_xxx`
 3. 配置保存在 `~/.config/dsh-opencode-go-usage.json`(cookie 失效后自动重新提取或按上述更新)
+
+> 提示:新版 Chrome/Edge 的 v20 加密暂不支持自动提取(会提示手动粘贴);Chromium 系浏览器提取前需先关闭该浏览器(cookie 数据库锁定)。
 
 凭据只在本机使用,不进日志、不发送任何第三方;15 分钟缓存,失败自动降级不影响本地视图。
 

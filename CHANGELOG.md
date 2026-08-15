@@ -2,6 +2,13 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.1] - 2026-08-16
+
+### 功能(cookie 自动提取支持任意浏览器)
+- **多浏览器提取**:Edge / Chrome / Chromium / Brave / Vivaldi / Arc / Opera / Firefox 任一浏览器登录过 opencode.ai 即可自动提取 auth cookie(Chromium 系 DPAPI + AES-GCM v10;Firefox `moz_cookies` 明文直读)
+- 浏览器运行锁定检测升级:先尝试只读打开,失败再复制,仍失败返回 `BROWSER_RUNNING`;找不到登录返回 `NO_LOGIN`;v20 新版加密返回 `V20`(提示手动粘贴)
+- 面板错误提示全部更新为浏览器通用文案
+
 ## [1.6.0] - 2026-08-16
 
 ### 重构(官方为唯一主数据源)
