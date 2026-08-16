@@ -437,12 +437,27 @@ return {
           try {
             let r
             // 动态模式走 host.call(harness 桥);bundle 模式走 webServer 本地路由。
-            if (typeof host !== 'undefined' && host && typeof host.call === 'function') {
-              r = await host.call('ocgo-usage:fetch')
-            } else {
+            const fetchP = (async () => {
+              if (typeof host !== 'undefined' && host && typeof host.call === 'function') {
+                return host.call('ocgo-usage:fetch')
+              }
               const res = await fetch('/ocgo-usage/fetch')
               if (!res.ok) throw new Error(t('err.local', { s: res.status }))
-              r = await res.json()
+              return res.json()
+            })()
+            // 看门狗:单次请求 60s 超时。历史问题:host 一次聚合耗时超过轮询
+            // 间隔时,inFlight 被长请求永久占用,60s 轮询被连续跳过,面板看起来
+            // "不再 60 秒刷新"。超时放弃本次、保留旧数据,下一个 tick 重试。
+            let wdTimer = null
+            const watchdog = new Promise((_, reject) => {
+              if (timer && typeof timer.setTimeout === 'function') {
+                wdTimer = timer.setTimeout(() => reject(new Error('fetch timeout (60s)')), 60000)
+              }
+            })
+            try {
+              r = await Promise.race([fetchP, watchdog])
+            } finally {
+              if (wdTimer) { try { wdTimer() } catch (e) { /* timer may be gone */ } }
             }
             if (!alive) return
             if (r && r.ok) {
@@ -460,11 +475,12 @@ return {
               }
             } else {
               stopFast()
-              setState({ loading: false, data: null, error: (r && r.error) || 'unknown error' })
+              // 保留旧数据:瞬时失败不清空面板/FAB(函数式更新避免闭包陈旧)
+              setState((prev) => ({ loading: false, data: prev.data, error: (r && r.error) || 'unknown error' }))
             }
           } catch (e) {
             stopFast()
-            if (alive) setState({ loading: false, data: null, error: String((e && e.message) || e) })
+            if (alive) setState((prev) => ({ loading: false, data: prev.data, error: String((e && e.message) || e) }))
           } finally {
             inFlight = false
           }

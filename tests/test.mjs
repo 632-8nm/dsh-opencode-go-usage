@@ -119,15 +119,20 @@ test('动态模式:注册 ocgo-usage:fetch 并正确聚合多数据源', async (
   assert.ok(handle, '应注册 ocgo-usage:fetch')
   const data = await handle(null)
   assert.equal(data.ok, true)
+  // 会话扫描已后台化:首次响应用旧扫描结果(空),等后台扫描完成后
+  // 再取一次(45s 缓存内同一对象,但 cache.data.dsh 已被后台更新)
+  await new Promise((r) => setTimeout(r, 20))
+  const settled = await handle(null)
+  assert.equal(settled, data, '45s 缓存内应返回同一对象')
 
   // DSH 会话分析:两笔 opencode-go(本地三源已移除,不再注入 opencode/codex)
-  assert.equal(data.dsh.total.requests, 2)
-  assert.equal(data.dsh.today.requests, 2)
-  assert.ok(typeof data.dsh.total.cost_est === 'number')
+  assert.equal(settled.dsh.total.requests, 2)
+  assert.equal(settled.dsh.today.requests, 2)
+  assert.ok(typeof settled.dsh.total.cost_est === 'number')
 
   // 模型排行按 cost 降序
-  assert.ok(data.dsh.by_model.length >= 1)
-  const costs = data.dsh.by_model.map((x) => x.cost_est)
+  assert.ok(settled.dsh.by_model.length >= 1)
+  const costs = settled.dsh.by_model.map((x) => x.cost_est)
   assert.deepEqual(costs, [...costs].sort((a, b) => b - a), 'by_model 应按 cost 降序')
 
   // 配额解析
@@ -137,10 +142,6 @@ test('动态模式:注册 ocgo-usage:fetch 并正确聚合多数据源', async (
   // 官方明细:首次调用可能是 loading(后台拉取中)或已完成的 mock 空数据
   assert.ok(data.official, '应包含 official 字段')
   assert.ok(data.official.ok || data.official.loading, 'official 应为数据或加载中')
-
-  // 两次调用:45s 缓存应复用同一对象(并发去重也生效)
-  const again = await handle(null)
-  assert.equal(again, data, '45s 缓存内应返回同一对象')
 })
 
 test('官方失败 60s 冷却:不重复全量抓取,冷却过后自动重试', async () => {
@@ -307,7 +308,10 @@ test('口径:DSH 源只统计 opencode-go provider,其它 provider 被排除', a
   const env = makeHostEnv({ dynamic: true, sessions })
   const m = await import(HOST_URL)
   m.apply(env.ctx)
-  const data = await env.handlers.get('ocgo-usage:fetch')(null)
+  const handle = env.handlers.get('ocgo-usage:fetch')
+  await handle(null)
+  await new Promise((r) => setTimeout(r, 20)) // 等后台扫描完成
+  const data = await handle(null)
   // DSH 视图只有 opencode-go 那 1 笔;deepseek 直连与无来源均不计入
   assert.equal(data.dsh.total.requests, 1)
 })
@@ -376,7 +380,10 @@ test('聚合:time=0 的记录不产生 Invalid/NaN 时间桶', async () => {
   const env = makeHostEnv({ dynamic: true, sessions })
   const m = await import(HOST_URL)
   m.apply(env.ctx)
-  const data = await env.handlers.get('ocgo-usage:fetch')(null)
+  const handle = env.handlers.get('ocgo-usage:fetch')
+  await handle(null)
+  await new Promise((r) => setTimeout(r, 20)) // 等后台扫描完成
+  const data = await handle(null)
   // DSH 的 time=0 那笔计入累计,且总 cost 为有限数
   assert.equal(data.dsh.total.requests, 1)
   assert.ok(Number.isFinite(data.dsh.total.cost_est))
