@@ -519,6 +519,36 @@ test('口径:DSH 源只统计 opencode-go provider,其它 provider 被排除', a
   assert.equal(data.dsh.total.requests, 1)
 })
 
+test('扫描完成后官方 recent 自动补真实会话 id(缓存命中路径)', async () => {
+  const realNow = Date.now
+  let now = realNow()
+  Date.now = () => now
+  try {
+    const sessions = [
+      { id: 'sess-x', title: '会话X', events: [mkAssistantEvent('deepseek-v4-flash', 'opencode-go', mkUsage({ inputTokens: 100 }))] },
+      { id: 'sess-y', title: '会话Y', events: [mkAssistantEvent('deepseek-v4-flash', 'opencode-go', mkUsage({ inputTokens: 200 }))] },
+    ]
+    const env = makeHostEnv({ dynamic: true, sessions })
+    const m = await import(HOST_URL)
+    m.apply(env.ctx)
+    const handle = env.handlers.get('ocgo-usage:fetch')
+    const d0 = await handle(null)
+    // 等后台扫描完成(refreshScanAsync 应同步刷新 cache.data.official.vd.recent)
+    await new Promise((r) => setTimeout(r, 30))
+    const d1 = await handle(null) // 45s 缓存命中,同一对象
+    assert.equal(d1, d0, '应为 45s 缓存内同一对象')
+    const recent = d1.official && d1.official.ok ? d1.official.vd.recent : null
+    assert.ok(recent && recent.length >= 2, '扫描完成后 recent 应有数据(实际 ' + (recent ? recent.length : 'null') + ')')
+    const ids = recent.map((s) => s.id)
+    assert.ok(ids.every((id) => id.startsWith('sess-')), '缓存命中路径也应使用真实会话 id: ' + ids.join(','))
+    assert.equal(new Set(ids).size, ids.length, 'id 唯一')
+    // 标题已回填
+    assert.ok(recent.some((s) => s.title === '会话X' || s.title === '会话Y'), '标题应回填')
+  } finally {
+    Date.now = realNow
+  }
+})
+
 // ---------------------------------------------------------------------------
 // 3. 静态模式:无 harness 时干净退出
 // ---------------------------------------------------------------------------

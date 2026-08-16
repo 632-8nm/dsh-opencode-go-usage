@@ -2,6 +2,15 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.24] - 2026-08-16
+
+### 修复(首次打开时"最近会话"无标题的中间态)
+- **扫描完成即补 recent**:重启后首次打开面板时,DSH 会话扫描在后台进行,官方视图 recent 先显示 usage.list 自聚合(`of-N`,无标题);此前要等下一次轮询(越过 45s 缓存)才补上真实会话标题——现在 `refreshScanAsync` 扫描完成时**同步重建 `cache.data.official.vd.recent`**(真实会话 id + 标题),打开面板后最多 15s(客户端 fast-poll)内即显示真实标题
+- 提取 `rebuildOfficialRecent()` 复用(fetchAll 与扫描完成路径共用,消除重复逻辑)
+
+### 测试
+- 新增用例:扫描完成后 recent 在**缓存命中路径**也使用真实会话 id 且标题回填;套件 20 → 21
+
 ## [1.6.23] - 2026-08-16
 
 ### 修复(官方视图"最近会话"列表上下重复——issue 632-8nm)
