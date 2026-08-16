@@ -1104,22 +1104,33 @@ return {
         // 进程,派生的浏览器不属于 DSH 的进程树,不会被 shell 服务在命令结束后
         // 清理,窗口正常显示;且只用 core cmdlet,不受受限执行环境影响。
         // 浏览器候选:Edge/Chrome/Brave/Vivaldi/Opera/Arc/Chromium 常见安装路径。
+        // 启动策略(2026-08-16 用户实测修复):
+        //   1. 9222 已监听 → 直接成功(用户可能已手动启动过)
+        //   2. explorer 中转 bat(历史方案;部分环境 explorer 不执行 .bat,
+        //      窗口不出现但命令仍返回成功——必须验证端口,不能假报"已弹出")
+        //   3. Start-Process 直接启动 Edge 兜底(不依赖 explorer;subprocess
+        //      服务只在插件 teardown 时清理进程树,命令结束后 Edge 存活)
+        //   4. 轮询验证 9222 监听(最多 ~6s),未监听返回 NO_LISTEN 明确报错
         const ps = [
           "$cands=@('C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe','C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe','C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe','C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe','C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe','C:\\Program Files\\Vivaldi\\Application\\vivaldi.exe','C:\\Program Files\\Opera\\launcher.exe',(Join-Path $env:LOCALAPPDATA 'Arc\\Application\\arc.exe'),(Join-Path $env:LOCALAPPDATA 'Chromium\\Application\\chrome.exe'))",
           "$edge=$null; foreach($c in $cands){ if($c -and (Test-Path $c)){ $edge=$c; break } }",
           "if(-not $edge){ Write-Output 'NO_BROWSER'; exit 2 }",
+          "if(Get-NetTCPConnection -LocalPort 9222 -State Listen -ErrorAction SilentlyContinue){ Write-Output 'OK'; exit 0 }",
           "$bat=Join-Path $env:TEMP 'ocgo-launch.bat'",
           "'@echo off' | Set-Content $bat -Encoding ASCII",
           "'start \"\" \"' + $edge + '\" --remote-debugging-port=9222 \"--user-data-dir=%USERPROFILE%\\.ocgo-browser-debug\" https://opencode.ai' | Add-Content $bat -Encoding ASCII",
           "explorer.exe $bat",
-          "Write-Output 'OK'",
-          'exit 0',
+          "Start-Process -FilePath $edge -ArgumentList '--remote-debugging-port=9222',(\"--user-data-dir=$env:USERPROFILE\\.ocgo-browser-debug\"),'https://opencode.ai' -WindowStyle Minimized",
+          "for($i=0;$i -lt 8;$i++){ Start-Sleep -Milliseconds 750; if(Get-NetTCPConnection -LocalPort 9222 -State Listen -ErrorAction SilentlyContinue){ Write-Output 'OK'; exit 0 } }",
+          "Write-Output 'NO_LISTEN'; exit 3",
         ].join('\n')
         const spec = shell.resolve({ command: 'powershell -NoProfile -NonInteractive -EncodedCommand ' + utf16leB64(ps), timeoutMs: 60000 })
         const result = await shell.run(spec)
         const text = String(typeof result.stdout === 'string' ? result.stdout : (result.stdout && result.stdout.text != null ? result.stdout.text : ''))
         if (result.exitCode !== 0 || !/OK/.test(text)) {
           const stderrText = String(typeof result.stderr === 'string' ? result.stderr : (result.stderr && result.stderr.text != null ? result.stderr.text : '')).slice(0, 150)
+          // 区分"浏览器没找到"与"启动了但 9222 未监听"(不再假报已弹出)
+          if (/NO_LISTEN/.test(text)) return { ok: false, error: 'NO_LISTEN: 浏览器已尝试启动但 9222 未监听(可手动双击 scripts/start-browser-debug.bat)' }
           return { ok: false, error: 'NO_BROWSER' + (stderrText ? ' (' + stderrText + ')' : '') }
         }
         return { ok: true }

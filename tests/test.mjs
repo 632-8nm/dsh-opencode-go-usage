@@ -49,7 +49,7 @@ test.after(() => {
 // ---------------------------------------------------------------------------
 // 工具:构造一次 apply 调用环境,可注入 fake services,并捕获 harness.handle
 // ---------------------------------------------------------------------------
-function makeHostEnv({ dynamic = true, sessions = [], officialResult = null, quotaResult = null } = {}) {
+function makeHostEnv({ dynamic = true, sessions = [], officialResult = null, quotaResult = null, launchResult = null } = {}) {
   const handlers = new Map()
   const fakeHarness = { handle: (method, fn) => { handlers.set(method, fn); return () => handlers.delete(method) } }
   // 动态模式模拟:dsh-cordis-host-runner 沙箱把 harness/btoa 作为全局。
@@ -62,6 +62,11 @@ function makeHostEnv({ dynamic = true, sessions = [], officialResult = null, quo
     resolve: (req) => ({ ...req }),
     run: async (spec) => {
       shellCalls.push(spec.command)
+      // 一键启动调试浏览器(pwsh -EncodedCommand)→ 默认成功(OK),可注入失败
+      if (spec.command.includes('EncodedCommand')) {
+        const lr = launchResult ?? 'OK'
+        return { exitCode: lr === 'OK' ? 0 : 3, stdout: { text: lr }, stderr: { text: '' } }
+      }
       // 多 key 配额命令(带 OCGO_KEYS_JSON,base64 payload 不含明文 url)→ 新结构
       if (spec.command.includes('OCGO_KEYS_JSON')) {
         const payload = quotaResult ?? {
@@ -444,6 +449,24 @@ test('配额:yaml 单 key 与 auth.json CLI key 自动合并为多 key', async (
   assert.equal(sent[1].name, 'cli')
   assert.equal(sent[1].active, false)
   assert.equal(sent[1].key, 'sk-cli-xxx')
+})
+
+test('一键启动调试浏览器:成功返回 ok,未监听返回明确错误(不再假报已弹出)', async () => {
+  // 成功路径
+  const okEnv = makeHostEnv({ dynamic: true, sessions: [] })
+  const m = await import(HOST_URL)
+  m.apply(okEnv.ctx)
+  const ok = await okEnv.handlers.get('ocgo-usage:launch-browser')(null)
+  assert.equal(ok.ok, true, '启动成功应返回 ok')
+  assert.ok(okEnv.shellCalls.some((c) => c.includes('EncodedCommand')), 'Windows 应走 pwsh -EncodedCommand')
+
+  // NO_LISTEN 路径:启动命令返回 NO_LISTEN → 明确错误,不再误报成功
+  const failEnv = makeHostEnv({ dynamic: true, sessions: [], launchResult: 'NO_LISTEN' })
+  const m2 = await import(HOST_URL)
+  m2.apply(failEnv.ctx)
+  const fail = await failEnv.handlers.get('ocgo-usage:launch-browser')(null)
+  assert.equal(fail.ok, false)
+  assert.ok(String(fail.error).includes('NO_LISTEN'), '应返回 NO_LISTEN 明确报错: ' + fail.error)
 })
 
 test('口径:DSH 源只统计 opencode-go provider,其它 provider 被排除', async () => {

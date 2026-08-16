@@ -2,6 +2,16 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.22] - 2026-08-16
+
+### 修复(一键启动调试浏览器"假成功"——提示已弹出但无窗口/9222 未监听)
+- 根因:旧实现只依赖 `explorer.exe` 执行临时 bat,部分环境(如 DSH 源码运行 + sandbox shell)下 explorer 不执行 .bat,但 PowerShell 照常输出 OK——用户看到"已弹出"实际什么都没发生
+- **新策略**(Windows):① 9222 已监听 → 直接成功;② explorer 中转 bat(保留);③ **`Start-Process` 直接启动 Edge 兜底**(不依赖 explorer;已确认 subprocess 服务只在插件 teardown 时清理进程树,命令结束后浏览器存活);④ **轮询验证 9222 监听(最多 ~6s)**,未监听返回 `NO_LISTEN` 明确报错(附手动启动提示),不再假报成功
+- 脚本经 PowerShell 解析器语法验证 + 新增 2 条测试(成功路径、NO_LISTEN 路径);套件 18 → 19
+
+### 已知说明
+- "保存凭据后很慢才出完整数据":首次全量抓取(10-15s)是预期行为——无磁盘缓存时需完整拉取历史,客户端 fast-poll 自动追赶;之后均为增量秒级
+
 ## [1.6.21] - 2026-08-16
 
 ### 功能(多 key 效果立即可见)
