@@ -19,6 +19,7 @@ return {
         'title': 'OpenCode Go 用量',
         'view.dsh': 'DSH',
         'view.official': '官方',
+        'dsh.loading': 'DSH 会话扫描中(全量读取会话事件,约 10-60 秒)…',
         'official.err': '官方数据不可用: {e}',
         'official.loading': '官方明细拉取中(首次抓全部历史,约 10-15 秒)…',
         'official.errNoBrowser': '未找到调试浏览器(端口 9222-9230)。点下方按钮一键启动调试浏览器并在窗口内登录 opencode.ai,关闭窗口后刷新即可自动提取。也可手动粘贴下方凭据。',
@@ -74,8 +75,8 @@ return {
         'foot.est': '金额: 官方 cost + 定价估算',
         'foot.upd': '更新 {t}',
         'foot.int': '60s 自动刷新',
-        'foot.recon': '官方月 {o} · 本地 {l}',
-        'foot.reconTitle': '官方账户级估算 vs 本机三源记录,差 {d}(缺口可能来自其它设备/网页端)',
+        'foot.recon': '官方窗口 {o} · 本地明细 {l}',
+        'foot.reconTitle': '官方配额按用量单位计(部分模型限时 2×,×$60 仅是参考换算);本地为 usage.list 逐请求美元明细——两口径不可直接对比,差 {d}',
         'load': '加载中…',
         'err.title': '数据不可用',
         'err.local': '本地数据接口 {s}',
@@ -98,6 +99,7 @@ return {
         'title': 'OpenCode Go Usage',
         'view.dsh': 'DSH',
         'view.official': 'Official',
+        'dsh.loading': 'Scanning DSH sessions (reading all session events, ~10-60s)…',
         'official.err': 'Official data unavailable: {e}',
         'official.loading': 'Fetching official usage (first pull fetches full history, ~10-15s)…',
         'official.errNoBrowser': 'No debug browser found (ports 9222-9230). Click the button below to launch the debug browser, sign in to opencode.ai in the window, close it, then refresh — auto-extract. You can also paste credentials below.',
@@ -153,8 +155,8 @@ return {
         'foot.est': 'Cost: official + estimated',
         'foot.upd': 'Updated {t}',
         'foot.int': 'Auto-refresh 60s',
-        'foot.recon': 'Official {o}/mo · Local {l}',
-        'foot.reconTitle': 'Official (account-level) vs local 3-source records, diff {d} (gap may come from other devices / web)',
+        'foot.recon': 'Official window {o} · Local detail {l}',
+        'foot.reconTitle': 'Official quota is metered in usage units (some models count 2x; ×$60 is only a reference conversion); local is per-request USD from usage.list — different bases, not directly comparable, diff {d}',
         'load': 'Loading…',
         'err.title': 'Data unavailable',
         'err.local': 'Local data endpoint {s}',
@@ -463,10 +465,9 @@ return {
             if (r && r.ok) {
               setState({ loading: false, data: r, error: null })
               setStamp(Date.now())
-              // 官方明细未就绪(首次全量 10-15s 后台拉取)时 15s 快速轮询,
-              // 就绪后恢复 60s 常规轮询
+              // 官方明细未就绪或 DSH 扫描未完成时 15s 快速轮询,就绪后恢复 60s
               const of = r.official
-              if (open && of && !of.ok) {
+              if (open && ((of && !of.ok) || r.dshLoading)) {
                 if (!fastTimer && timer && typeof timer.setTimeout === 'function') {
                   fastTimer = timer.setTimeout(() => { fastTimer = null; if (alive) load() }, 15000)
                 }
@@ -681,6 +682,9 @@ return {
       const d = state.data
       const official = d && d.official
       const dshVd = d && d.dsh
+      // DSH 会话扫描后台化后,首次(或扫描过期重扫期间)响应里的 dsh 是旧/空
+      // 数据——未就绪时(dshLoading)显示"扫描中"提示,不渲染 0 误导
+      const dshLoading = !!(d && d.dshLoading)
       const officialVd = official && official.ok ? official.vd : null
       // 官方视图只认官方明细;DSH 数据仅在 DSH 视图展示,官方明细不可用时不充数
       const vd = (view === 'dsh' ? dshVd : officialVd) || null
@@ -716,7 +720,7 @@ return {
 
       const fab = React.createElement('button', { className: 'ocgo-fab' + fabWarn, style: fabStyle, onMouseDown: onFabDown, title: fabTitle },
         React.createElement('span', null, 'OpenCode Go'),
-        total ? React.createElement('span', { style: { fontWeight: 800 } }, fmtUsd(total.cost_est)) : null,
+        (total && !(view === 'dsh' && dshLoading)) ? React.createElement('span', { style: { fontWeight: 800 } }, fmtUsd(total.cost_est)) : null,
         rollPct != null ? React.createElement('span', { className: 'ocgo-fab-sub' }, t('fab.rolling', { p: pct(rollPct) })) : null
       )
       if (!open) return React.createElement('div', null, fab)
@@ -729,7 +733,7 @@ return {
           React.createElement('div', null, t('err.title')),
           React.createElement('div', null, state.error)
         ))
-      } else if (vd || (view !== 'dsh' && official)) {
+      } else if (dshLoading || vd || (view !== 'dsh' && official)) {
         body.push(React.createElement('div', { key: 'views', className: 'ocgo-viewrow' },
           React.createElement('div', { className: 'ocgo-seg' },
             React.createElement('button', { className: 'ocgo-seg-btn' + (view === 'official' ? ' on' : ''), onClick: () => setView('official') }, t('view.official')),
@@ -766,6 +770,10 @@ return {
             ))
           }
         }
+        // DSH 扫描状态横幅:未就绪时提示,不显示 0 数据
+        if (view === 'dsh' && dshLoading) {
+          body.push(React.createElement('div', { key: 'dsh-status', className: 'ocgo-src miss' }, t('dsh.loading')))
+        }
         body.push(React.createElement('div', { key: 'srcs', className: 'ocgo-viewrow' },
           view === 'dsh'
             ? React.createElement('span', { className: 'ocgo-src ok' }, 'DSH 会话')
@@ -798,7 +806,7 @@ return {
           }
         }
         // 明细板块:官方视图需官方明细就绪;DSH 视图用 DSH 会话数据
-        if (vd) {
+        if (vd && !(view === 'dsh' && dshLoading)) {
         // 环比:今日 vs 昨日(by_day 末项为今天,前一项为昨天)
         const vsd = (() => {
           const bd = vd.by_day
@@ -890,15 +898,17 @@ return {
           React.createElement('span', { key: 'upd' }, t('foot.upd', { t: stamp ? fmtTime(stamp) : '—' })),
           React.createElement('span', { key: 'int' }, t('foot.int'))
         ].filter(Boolean)
-        // 官方月度估算 vs 明细合计:quota monthly% × $60 vs usage.list 本月明细
+        // 官方配额 vs 本地明细:仅信息展示,不再判对错——
+        // 配额接口的 percent 按"用量单位"计(部分模型限时 2×,实测 monthly
+        // 33%×$60=$19.80 而同一窗口的美元明细仅 $9.71,差约 2 倍),与 usage.list
+        // 的逐请求美元明细不是同一计量基准,百分比×$60 换算出的"金额"只是
+        // 参考值,直接对比并标红是误报(实测差值 17%+ 恒触发 warn)。
         const qm = d && d.quota && d.quota.monthly
         if (view !== 'dsh' && qm && qm.percent != null && vd && vd.month && vd.month.cost_est != null) {
           const officialEst = (qm.percent / 100) * 60
-          const diff = officialEst - vd.month.cost_est
           foot.push(React.createElement('span', {
             key: 'recon',
-            className: Math.abs(diff) > officialEst * 0.15 ? 'ocgo-warn' : '',
-            title: t('foot.reconTitle', { d: fmtUsd(diff) }),
+            title: t('foot.reconTitle', { d: fmtUsd(officialEst - vd.month.cost_est) }),
           }, t('foot.recon', { o: fmtUsd(officialEst), l: fmtUsd(vd.month.cost_est) })))
         }
         body.push(React.createElement('div', { key: 'foot', className: 'ocgo-foot' }, foot))

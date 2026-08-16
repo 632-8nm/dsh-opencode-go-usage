@@ -119,11 +119,13 @@ test('动态模式:注册 ocgo-usage:fetch 并正确聚合多数据源', async (
   assert.ok(handle, '应注册 ocgo-usage:fetch')
   const data = await handle(null)
   assert.equal(data.ok, true)
-  // 会话扫描已后台化:首次响应用旧扫描结果(空),等后台扫描完成后
-  // 再取一次(45s 缓存内同一对象,但 cache.data.dsh 已被后台更新)
+  // 会话扫描已后台化:首次响应 dshLoading=true(扫描未完成,不显示 0 误导),
+  // 等后台扫描完成后 dshLoading=false 且 dsh 有数据
+  assert.equal(data.dshLoading, true, '首次响应应标记 dshLoading(扫描未完成)')
   await new Promise((r) => setTimeout(r, 20))
   const settled = await handle(null)
   assert.equal(settled, data, '45s 缓存内应返回同一对象')
+  assert.equal(settled.dshLoading, false, '后台扫描完成后 dshLoading 应清除')
 
   // DSH 会话分析:两笔 opencode-go(本地三源已移除,不再注入 opencode/codex)
   assert.equal(settled.dsh.total.requests, 2)

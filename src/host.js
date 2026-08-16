@@ -887,9 +887,13 @@ return {
             const dv = buildView(dshRows)
             dv.matchedOfficial = dshRows.matchedOfficial || 0
             cache.data.dsh = dv
+            cache.data.dshLoading = false
           }
         })
-        .catch(() => { /* 扫描失败:保留旧 lastScan,下次轮询再试 */ })
+        .catch((e) => {
+          ocgoLog('dsh scan failed: ' + String((e && e.message) || e))
+          // 扫描失败:保留旧 lastScan(无则保持 dshLoading),下次轮询再试
+        })
         .finally(() => { scanInflight = null })
       return scanInflight
     }
@@ -947,7 +951,7 @@ return {
             .slice(0, 8)
             .map((s) => ({ id: 's', title: s.title, cost_est: Math.round(s.cost * 10000) / 10000, updated: s.updated }))
         }
-        const data = { ok: true, fetchedAt: Date.now(), quota: quota.error ? null : quota, quotaError: quota.error || null, dsh, official: off || officialErr || { ok: false, loading: true } }
+        const data = { ok: true, fetchedAt: Date.now(), quota: quota.error ? null : quota, quotaError: quota.error || null, dsh, dshLoading: !(lastScan && lastScan.rows), official: off || officialErr || { ok: false, loading: true } }
         cache = { at: Date.now(), data }
         return data
       })()
