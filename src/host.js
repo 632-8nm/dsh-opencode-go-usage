@@ -688,14 +688,18 @@ return {
 
     // 跨平台 python 调用命令(bundle 模式按 process.platform 分支;动态沙箱无
     // process → 走 Windows 写法,开发环境在 Windows)。envPairs: [['K','V'],...]
+    // 注意:Windows 的 -c 前导必须 `import base64, os`——此前只有 base64,
+    // 增量注入 os.environ['OCGO_LAST_TS'] 时直接 NameError,增量脚本从未成功
+    // 执行过(诊断日志:NameError: name 'os' is not defined)。
     function buildPythonCmd(payload, envPairs) {
       const plat = (typeof process !== 'undefined' && process.platform) || ''
-      const envPart = (envPairs || []).map((e) => ";os.environ['" + e[0] + "']='" + e[1] + "'").join('')
       if (plat === 'darwin' || plat === 'linux') {
+        // POSIX:环境变量用 shell export 注入(不需要 os.environ,也不拼进 -c)
         const envPre = (envPairs || []).map((e) => "export " + e[0] + "='" + e[1] + "'; ").join('')
-        return "PY=$(command -v python3 || command -v python || true); if [ -z \"$PY\" ]; then echo python-not-found >&2; exit 1; fi; " + envPre + "\"$PY\" -c \"import base64" + envPart + ";exec(base64.b64decode('" + payload + "'))\""
+        return "PY=$(command -v python3 || command -v python || true); if [ -z \"$PY\" ]; then echo python-not-found >&2; exit 1; fi; " + envPre + "\"$PY\" -c \"import base64;exec(base64.b64decode('" + payload + "'))\""
       }
-      return "$py='E:\\python\\python.exe';if(-not(Test-Path $py)){$c=Get-Command python -ErrorAction SilentlyContinue;if($c){$py=$c.Source}else{Write-Error 'python-not-found';exit 1}}; & $py -c \"import base64" + envPart + ";exec(base64.b64decode('" + payload + "'))\""
+      const envPart = (envPairs || []).map((e) => ";os.environ['" + e[0] + "']='" + e[1] + "'").join('')
+      return "$py='E:\\python\\python.exe';if(-not(Test-Path $py)){$c=Get-Command python -ErrorAction SilentlyContinue;if($c){$py=$c.Source}else{Write-Error 'python-not-found';exit 1}}; & $py -c \"import base64, os" + envPart + ";exec(base64.b64decode('" + payload + "'))\""
     }
 
     // 磁盘记录的 ts 是 "MM/dd/yyyy HH:mm:ss"(美国格式):字符串 max 跨月/跨年

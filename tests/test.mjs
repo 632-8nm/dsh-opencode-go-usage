@@ -284,7 +284,12 @@ test('增量:截断的磁盘缓存触发一次强制全量重建(12h 节流,之�
     assert.equal(d1.official.ok, true)
     await new Promise((r) => setTimeout(r, 10))
     assert.equal(officialRuns(), 2, '节流期内应走普通增量')
-    assert.ok(env.shellCalls.some((c) => c.includes('OCGO_LAST_TS')), '普通增量应携带 OCGO_LAST_TS')
+    const incCmd = env.shellCalls.find((c) => c.includes('OCGO_LAST_TS'))
+    assert.ok(incCmd, '普通增量应携带 OCGO_LAST_TS')
+    // 回归门禁:增量命令的 python 前导必须 import os(历史 bug:只有 base64,
+    // os.environ 注入直接 NameError,增量脚本从未成功执行过)
+    assert.ok(incCmd.includes("import base64, os"), 'python 前导必须 import base64, os(否则增量 NameError)')
+    assert.ok(incCmd.includes("os.environ['OCGO_LAST_TS']"), '增量应经 os.environ 注入 LAST')
   } finally {
     Date.now = realNow
   }

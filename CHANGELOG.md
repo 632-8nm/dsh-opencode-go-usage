@@ -2,6 +2,15 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.14] - 2026-08-16
+
+### 修复(增量从未真正成功——历史根因)
+- **增量命令 NameError 修复**:`buildPythonCmd` 注入 `OCGO_LAST_TS` 时生成的 python 前导只有 `import base64`,`os.environ['OCGO_LAST_TS']=...` 直接抛 `NameError: name 'os' is not defined`——**增量脚本在真实插件里从未成功执行过**(诊断日志持续记录该 Traceback,面板金额/条数因此永不刷新);修复为 `import base64, os`,macOS/Linux 分支移除冗余的 envPart(环境变量已由 shell export 注入)
+- **真实执行验证**:修复后增量命令实际跑通——磁盘缓存 13,396 → **13,893 条(+497 条新记录)**,最新记录从 08:07 推进到 09:25,合并 0 丢失
+
+### 测试
+- 增量用例新增回归门禁:断言命令前导必须为 `import base64, os` 且经 `os.environ` 注入 LAST(防止 NameError 复发)
+
 ## [1.6.13] - 2026-08-16
 
 ### 修复(DSH 服务被 V8 堆 OOM 杀死——退出码 134)
