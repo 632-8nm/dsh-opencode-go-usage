@@ -274,12 +274,20 @@ test('增量:截断的磁盘缓存触发一次强制全量重建(12h 节流,之�
     const handle = env.handlers.get('ocgo-usage:fetch')
     const officialRuns = () => env.shellCalls.filter((c) => c.includes('base64') && !c.includes('zen/go/v1/usage')).length
 
-    // t0:读到截断缓存 → 强制全量重建(不带 OCGO_LAST_TS)
+    // t0:读到截断缓存 → 强制全量重建(不带 OCGO_LAST_TS);
+    // 注意:磁盘缓存不再秒开——首响应要么加载中、要么已是真实抓取结果
+    // (mock 瞬时完成),但绝不携带磁盘缓存的 2 条旧记录
     const d0 = await handle(null)
-    assert.equal(d0.official.ok, true)
+    assert.notEqual(d0.official.records, 2, '首响应不得展示磁盘缓存旧记录')
+    if (d0.official.ok) assert.equal(d0.official.records, 0, '若已展示则必须是真实抓取结果')
     await new Promise((r) => setTimeout(r, 10))
     assert.equal(officialRuns(), 1, '截断缓存应触发一次强制全量重建')
     assert.ok(!env.shellCalls.some((c) => c.includes('OCGO_LAST_TS')), '强制重建应是全量(无 LAST)')
+
+    // 重建完成(后台)→ 下一次响应(45s 缓存内同一对象)展示真实数据
+    const d0b = await handle(null)
+    assert.equal(d0b.official.ok, true, '重建完成后应展示真实数据')
+    assert.equal(d0b.official.records, 0, '数据来自抓取结果(mock 空),而非磁盘缓存')
 
     // t0+50s:12h 节流内 → 不重复强制,改走普通增量(带 OCGO_LAST_TS)
     now += 50_000
@@ -293,6 +301,45 @@ test('增量:截断的磁盘缓存触发一次强制全量重建(12h 节流,之�
     // os.environ 注入直接 NameError,增量脚本从未成功执行过)
     assert.ok(incCmd.includes("import base64, os"), 'python 前导必须 import base64, os(否则增量 NameError)')
     assert.ok(incCmd.includes("os.environ['OCGO_LAST_TS']"), '增量应经 os.environ 注入 LAST')
+  } finally {
+    Date.now = realNow
+  }
+})
+
+test('官方视图:磁盘缓存不再秒开,增量完成才展示真实数据', async () => {
+  const realNow = Date.now
+  let now = realNow()
+  Date.now = () => now
+  try {
+    // 正常的(未截断)磁盘缓存
+    const fake = {
+      at: now - 60e3,
+      truncated: false,
+      records: [
+        { ts: '2026-08-16T08:00:00.000Z', model: 'deepseek-v4-flash', ti: 100, to: 50, rt: 0, cr: 10, cost: 123 },
+        { ts: '2026-08-16T07:00:00.000Z', model: 'deepseek-v4-pro', ti: 200, to: 80, rt: 0, cr: 0, cost: 456 },
+      ],
+    }
+    mkdirSync(join(FAKE_HOME, '.config'), { recursive: true })
+    writeFileSync(DISK_CACHE, JSON.stringify(fake), 'utf8')
+    const env = makeHostEnv({ dynamic: true, sessions: [] })
+    const m = await import(HOST_URL)
+    m.apply(env.ctx)
+    const handle = env.handlers.get('ocgo-usage:fetch')
+
+    // t0:内存无缓存、磁盘有缓存 → 首响应要么"加载中"、要么已是真实抓取
+    // 结果(mock 增量瞬时完成),但绝不展示磁盘缓存的 2 条旧记录
+    const d0 = await handle(null)
+    assert.notEqual(d0.official.records, 2, '有磁盘缓存也不得秒开旧记录')
+    if (d0.official.ok) assert.equal(d0.official.records, 0, '若已展示则必须是真实抓取结果')
+
+    // 后台增量(以磁盘为基准)完成 → 下一次响应展示真实数据(mock 返回的空集)
+    await new Promise((r) => setTimeout(r, 10))
+    const d1 = await handle(null)
+    assert.equal(d1.official.ok, true, '增量完成后应展示真实数据')
+    assert.equal(d1.official.records, 0, '展示的是抓取结果而非磁盘旧记录')
+    // 增量应携带 OCGO_LAST_TS(磁盘基准)
+    assert.ok(env.shellCalls.some((c) => c.includes('OCGO_LAST_TS')), '应以磁盘为基准走增量而非全量')
   } finally {
     Date.now = realNow
   }
