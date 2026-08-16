@@ -2,6 +2,18 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.19] - 2026-08-16
+
+### 功能(多 key 池 + rate-limited 状态)
+- **多 key 配额池**:自动发现 `$DSH_HOME/.credentials.yaml` 的 `OPENCODE_GO_KEY_<name>` 条目(明文 yaml,任意数量),`OPENCODE_GO_KEY_ACTIVE` 标记当前生效 key;无池时回退 `OPENCODE_GO_API_KEY`;插件行 `config.keyNames` 可显式指定。key 列表 base64 传 python 逐 key 抓取,**单个 key 失败不影响其他**;单 key 场景行为不变(仍可走 curl+python 双通道回退)
+- **面板布局优化**:多 key 时配额区顶部显示 **key 切换标签行**(★ = 当前生效,⚠ = 该 key 查询失败),点击切换;FAB 金额/配额、告警条、对账均跟随当前选中 key;CSV 导出每 key 一组窗口
+- **rate-limited 状态展示**:窗口 `status='rate-limited'` 时环形图红色 + "⚠ 已限流"徽标(替代倒计时),不再只显示百分比
+- **发现**:本机 `.credentials.yaml` 的 `OPENCODE_GO_API_KEY` 与 `auth.json` 的 `opencode-go.key` 是**不同 key 但同一账号**(实测配额完全一致)——多 key 后两者都能查
+- 修复 `build-lib.mjs` 对 `apply(ctx, config)` 签名的支持(stripWrapper 正则此前只匹配 `apply(ctx)`,导致构建产物语法错误)
+
+### 测试
+- 新增 2 用例:多 key 池发现(payload 解码验证传给 python 的 key 列表 + ACTIVE 标记)、yaml 单 key 回退;套件 15 → 17
+
 ## [未发布] - 2026-08-16
 
 ### 文档

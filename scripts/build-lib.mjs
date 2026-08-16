@@ -18,11 +18,11 @@ const PACKAGE_NAME = 'dsh-opencode-go-usage'
 const HOST_NAME = 'opencode-go-usage'
 const CLIENT_NAME = 'opencode-go-usage-client'
 
-// 去掉开头注释块与 `return {`、末尾收尾 `}`,并把 `apply(ctx) {` 换成函数声明。
+// 去掉开头注释块与 `return {`、末尾收尾 `}`,并把 `apply(ctx[, config]) {` 换成函数声明。
 function stripWrapper(text) {
   text = text.replace(/^[\s\S]*?\nreturn \{/, '')
   text = text.replace(/\n\}\s*$/, '')
-  return text.replace(/^\s*apply\(ctx\) \{/, 'function apply(ctx) {')
+  return text.replace(/^\s*apply\(ctx(?:, config)?\) \{/, 'function apply(ctx, config) {')
 }
 
 function buildHost() {
@@ -37,7 +37,7 @@ function buildHost() {
   ].join('\n')
   const outText = 'export const name = ' + JSON.stringify(HOST_NAME) + '\n' +
     imports +
-    text.replace(/^function apply\(ctx\) \{/, 'export function apply(ctx) {') + '\n'
+    text.replace(/^function apply\(ctx(?:, config)?\) \{/, 'export function apply(ctx, config) {') + '\n'
   mkdirSync(join(root, 'lib'), { recursive: true })
   writeFileSync(join(root, 'lib', 'index.js'), outText)
   console.log('built lib/index.js (host ESM)')

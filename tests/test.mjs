@@ -27,11 +27,12 @@ const HOST_URL = pathToFileURL(join(root, 'lib', 'index.js'))
 // ocgoLog 会把测试噪声写进真实 ~/.config 日志)。
 // ---------------------------------------------------------------------------
 const FAKE_HOME = mkdtempSync(join(tmpdir(), 'ocgo-test-home-'))
-const SAVED_HOME_ENV = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME }
+const SAVED_HOME_ENV = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME, DSH_HOME: process.env.DSH_HOME }
 const DISK_CACHE = join(FAKE_HOME, '.config', 'dsh-opencode-go-usage-official.json')
 test.before(() => {
   process.env.USERPROFILE = FAKE_HOME
   process.env.HOME = FAKE_HOME
+  process.env.DSH_HOME = FAKE_HOME // 多 key 发现(yaml)也落在临时 HOME
 })
 test.after(() => {
   try {
@@ -39,6 +40,8 @@ test.after(() => {
     else process.env.USERPROFILE = SAVED_HOME_ENV.USERPROFILE
     if (SAVED_HOME_ENV.HOME === undefined) delete process.env.HOME
     else process.env.HOME = SAVED_HOME_ENV.HOME
+    if (SAVED_HOME_ENV.DSH_HOME === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = SAVED_HOME_ENV.DSH_HOME
   } catch (e) { /* 还原失败仅记录 */ }
   rmSync(FAKE_HOME, { recursive: true, force: true })
 })
@@ -46,7 +49,7 @@ test.after(() => {
 // ---------------------------------------------------------------------------
 // 工具:构造一次 apply 调用环境,可注入 fake services,并捕获 harness.handle
 // ---------------------------------------------------------------------------
-function makeHostEnv({ dynamic = true, sessions = [], officialResult = null } = {}) {
+function makeHostEnv({ dynamic = true, sessions = [], officialResult = null, quotaResult = null } = {}) {
   const handlers = new Map()
   const fakeHarness = { handle: (method, fn) => { handlers.set(method, fn); return () => handlers.delete(method) } }
   // 动态模式模拟:dsh-cordis-host-runner 沙箱把 harness/btoa 作为全局。
@@ -59,7 +62,15 @@ function makeHostEnv({ dynamic = true, sessions = [], officialResult = null } = 
     resolve: (req) => ({ ...req }),
     run: async (spec) => {
       shellCalls.push(spec.command)
-      // 配额命令(含 /zen/go/v1/usage)→ 返回配额 JSON
+      // 多 key 配额命令(带 OCGO_KEYS_JSON,base64 payload 不含明文 url)→ 新结构
+      if (spec.command.includes('OCGO_KEYS_JSON')) {
+        const payload = quotaResult ?? {
+          ok: true,
+          keys: [{ name: 'go1', active: true, error: null, windows: { rolling: { percent: 30, status: 'ok', resetsAt: 1787000000000 }, weekly: { percent: 12, status: 'ok', resetsAt: 1787000000000 }, monthly: { percent: 33, status: 'ok', resetsAt: 1787000000000 } } }],
+        }
+        return { exitCode: 0, stdout: { text: JSON.stringify(payload) }, stderr: { text: '' } }
+      }
+      // 单 key 配额命令(含 /zen/go/v1/usage)→ 旧结构(curl 通道)
       if (spec.command.includes('zen/go/v1/usage')) {
         return { exitCode: 0, stdout: { text: JSON.stringify({ usage: { rolling: { percent: 30, status: 'ok', resetsAt: 1787000000000 }, weekly: { percent: 12, status: 'ok', resetsAt: 1787000000000 } } }) }, stderr: { text: '' } }
       }
@@ -137,8 +148,9 @@ test('动态模式:注册 ocgo-usage:fetch 并正确聚合多数据源', async (
   const costs = settled.dsh.by_model.map((x) => x.cost_est)
   assert.deepEqual(costs, [...costs].sort((a, b) => b - a), 'by_model 应按 cost 降序')
 
-  // 配额解析
-  assert.equal(data.quota.rolling.percent, 30)
+  // 配额解析(单 key 回退通道 → keys[0])
+  assert.equal(data.quota.keys[0].windows.rolling.percent, 30)
+  assert.equal(data.quota.keys[0].windows.weekly.percent, 12)
   assert.equal(data.quotaError, null)
 
   // 官方明细:首次调用可能是 loading(后台拉取中)或已完成的 mock 空数据
@@ -343,6 +355,72 @@ test('官方视图:磁盘缓存不再秒开,增量完成才展示真实数据', 
   } finally {
     Date.now = realNow
   }
+})
+
+test('配额:多 key 池自动发现(.credentials.yaml 的 OPENCODE_GO_KEY_* + ACTIVE)', async () => {
+  // 假凭据文件:池 go1/go2 + ACTIVE=go2 + 单 key 回退项
+  const yaml = [
+    'DEEPSEEK_API_KEY: sk-dd-xxx',
+    'OPENCODE_GO_API_KEY: sk-main-xxx',
+    'OPENCODE_GO_KEY_ACTIVE: go2',
+    'OPENCODE_GO_KEY_go1: sk-go1-xxx',
+    'OPENCODE_GO_KEY_go2: sk-go2-xxx',
+    '',
+  ].join('\n')
+  mkdirSync(FAKE_HOME, { recursive: true })
+  writeFileSync(join(FAKE_HOME, '.credentials.yaml'), yaml, 'utf8')
+  const quotaResult = {
+    ok: true,
+    keys: [
+      { name: 'go1', active: false, error: null, windows: { rolling: { percent: 20, status: 'ok', resetsAt: '2026-08-16T12:00:00Z' }, weekly: { percent: 40, status: 'ok', resetsAt: null }, monthly: { percent: 60, status: 'ok', resetsAt: null } } },
+      { name: 'go2', active: true, error: null, windows: { rolling: { percent: 70, status: 'rate-limited', resetsAt: '2026-08-16T12:00:00Z' }, weekly: { percent: 10, status: 'ok', resetsAt: null }, monthly: { percent: 5, status: 'ok', resetsAt: null } } },
+    ],
+  }
+  const env = makeHostEnv({ dynamic: true, sessions: [], quotaResult })
+  const m = await import(HOST_URL)
+  m.apply(env.ctx)
+  const data = await env.handlers.get('ocgo-usage:fetch')(null)
+
+  // 两个 key 都被发现,ACTIVE 标记正确(mock 回显 = host 传入列表)
+  assert.equal(data.quota.keys.length, 2)
+  assert.equal(data.quota.keys[0].name, 'go1')
+  assert.equal(data.quota.keys[0].active, false)
+  assert.equal(data.quota.keys[1].name, 'go2')
+  assert.equal(data.quota.keys[1].active, true, 'OPENCODE_GO_KEY_ACTIVE=go2 应标记生效')
+  // rate-limited 状态原样透传(客户端据此显示 ⚠)
+  assert.equal(data.quota.keys[1].windows.rolling.status, 'rate-limited')
+  // 走的是多 key python 通道(带 OCGO_KEYS_JSON),而非单 key curl 通道;
+  // 解码 payload 验证 host 实际传给 python 的 key 列表
+  const cmd = env.shellCalls.find((c) => c.includes('OCGO_KEYS_JSON'))
+  assert.ok(cmd, '多 key 应走 python 通道(OCGO_KEYS_JSON)')
+  const b64 = cmd.match(/OCGO_KEYS_JSON'\]='([A-Za-z0-9+/=]+)'/)
+  assert.ok(b64, '应携带 base64 编码的 key 列表')
+  const sent = JSON.parse(Buffer.from(b64[1], 'base64').toString('utf8'))
+  assert.equal(sent.length, 2)
+  assert.equal(sent[0].name, 'go1')
+  assert.equal(sent[1].name, 'go2')
+  assert.equal(sent[1].active, true, 'ACTIVE 标记应传给 python')
+})
+
+test('配额:yaml 无池时回退 OPENCODE_GO_API_KEY 单 key', async () => {
+  const yaml = ['OPENCODE_GO_API_KEY: sk-main-xxx', ''].join('\n')
+  mkdirSync(FAKE_HOME, { recursive: true })
+  writeFileSync(join(FAKE_HOME, '.credentials.yaml'), yaml, 'utf8')
+  const env = makeHostEnv({ dynamic: true, sessions: [] })
+  const m = await import(HOST_URL)
+  m.apply(env.ctx)
+  await env.handlers.get('ocgo-usage:fetch')(null)
+  // mock 回显是固定值,真正验证 host 传给 python 的 key 列表:
+  // yaml 单 key 应作为 default 传入
+  const cmd = env.shellCalls.find((c) => c.includes('OCGO_KEYS_JSON'))
+  assert.ok(cmd, 'yaml 单 key 也应走 python 通道')
+  const b64 = cmd.match(/OCGO_KEYS_JSON'\]='([A-Za-z0-9+/=]+)'/)
+  assert.ok(b64, '应携带 base64 编码的 key 列表')
+  const sent = JSON.parse(Buffer.from(b64[1], 'base64').toString('utf8'))
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0].name, 'default')
+  assert.equal(sent[0].key, 'sk-main-xxx')
+  assert.equal(sent[0].active, true)
 })
 
 test('口径:DSH 源只统计 opencode-go provider,其它 provider 被排除', async () => {
