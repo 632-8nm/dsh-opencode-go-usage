@@ -11,7 +11,7 @@
 // 运行:`node --test` 或 `npm test`
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, existsSync, renameSync } from 'node:fs'
+import { readFileSync, existsSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -24,6 +24,7 @@ const HOST_URL = pathToFileURL(join(root, 'lib', 'index.js'))
 // 测试隔离:官方磁盘缓存是真实用户数据。fetchAll 会读
 // ~/.config/dsh-opencode-go-usage-official.json(开发机上真实存在),为保持
 // 用例封闭,套件运行期间暂时移开该文件,结束后原样还原(不会触碰凭据配置)。
+// 部分用例会在此路径写入假缓存,after 钩子统一清理后再还原真实文件。
 // ---------------------------------------------------------------------------
 const DISK_CACHE = join(homedir(), '.config', 'dsh-opencode-go-usage-official.json')
 const DISK_CACHE_BAK = DISK_CACHE + '.testbak'
@@ -35,6 +36,7 @@ test.before(() => {
 })
 test.after(() => {
   try {
+    if (existsSync(DISK_CACHE)) rmSync(DISK_CACHE, { force: true }) // 测试写入的假缓存
     if (diskMoved && existsSync(DISK_CACHE_BAK)) renameSync(DISK_CACHE_BAK, DISK_CACHE)
   } catch (e) { /* 还原失败仅记录 */ }
 })
@@ -207,6 +209,79 @@ test('官方抓取成功后 official 变为可用数据(冷却被清除)', async
     const d2 = await handle(null)
     assert.equal(d2.official.ok, true, '重试成功后 official 应为可用数据')
     assert.equal(d2.official.truncated, false)
+  } finally {
+    Date.now = realNow
+  }
+})
+
+test('增量:磁盘缓存缺失时回退全量重抓(15min 节流,不静默停摆)', async () => {
+  const realNow = Date.now
+  let now = realNow()
+  Date.now = () => now
+  try {
+    const env = makeHostEnv({ dynamic: true, sessions: [] })
+    const m = await import(HOST_URL)
+    m.apply(env.ctx)
+    const handle = env.handlers.get('ocgo-usage:fetch')
+    const officialRuns = () => env.shellCalls.filter((c) => c.includes('base64') && !c.includes('zen/go/v1/usage')).length
+
+    // t0:无内存/磁盘缓存 → 首次全量(模拟磁盘缺失:python 未落盘)
+    await handle(null)
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(officialRuns(), 1)
+    assert.equal(existsSync(DISK_CACHE), false, '用例前提:磁盘缓存不存在')
+
+    // t0+50s:内存有 ok 数据但磁盘缺失 → 增量无基准,应回退全量重抓(不静默跳过)
+    now += 50_000
+    const d1 = await handle(null)
+    assert.equal(d1.official.ok, true)
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(officialRuns(), 2, '磁盘缺失时增量应回退全量重抓,不得静默停摆')
+
+    // t0+100s:仍在 15min 回退节流内 → 不再重复全量
+    now += 50_000
+    await handle(null)
+    assert.equal(officialRuns(), 2, '回退全量 15min 节流期内不得重复')
+  } finally {
+    Date.now = realNow
+  }
+})
+
+test('增量:截断的磁盘缓存触发一次强制全量重建(12h 节流,之后走普通增量)', async () => {
+  const realNow = Date.now
+  let now = realNow()
+  Date.now = () => now
+  try {
+    // 假磁盘缓存:truncated=true(旧版 150 页截断遗留的数据形态)
+    const fake = {
+      at: now - 3600e3,
+      truncated: true,
+      records: [
+        { ts: '08/16/2026 03:00:00', model: 'deepseek-v4-flash', ti: 100, to: 50, rt: 0, cr: 10, cost: 123 },
+        { ts: '08/16/2026 02:00:00', model: 'deepseek-v4-pro', ti: 200, to: 80, rt: 0, cr: 0, cost: 456 },
+      ],
+    }
+    writeFileSync(DISK_CACHE, JSON.stringify(fake), 'utf8')
+    const env = makeHostEnv({ dynamic: true, sessions: [] })
+    const m = await import(HOST_URL)
+    m.apply(env.ctx)
+    const handle = env.handlers.get('ocgo-usage:fetch')
+    const officialRuns = () => env.shellCalls.filter((c) => c.includes('base64') && !c.includes('zen/go/v1/usage')).length
+
+    // t0:读到截断缓存 → 强制全量重建(不带 OCGO_LAST_TS)
+    const d0 = await handle(null)
+    assert.equal(d0.official.ok, true)
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(officialRuns(), 1, '截断缓存应触发一次强制全量重建')
+    assert.ok(!env.shellCalls.some((c) => c.includes('OCGO_LAST_TS')), '强制重建应是全量(无 LAST)')
+
+    // t0+50s:12h 节流内 → 不重复强制,改走普通增量(带 OCGO_LAST_TS)
+    now += 50_000
+    const d1 = await handle(null)
+    assert.equal(d1.official.ok, true)
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(officialRuns(), 2, '节流期内应走普通增量')
+    assert.ok(env.shellCalls.some((c) => c.includes('OCGO_LAST_TS')), '普通增量应携带 OCGO_LAST_TS')
   } finally {
     Date.now = realNow
   }

@@ -10,7 +10,7 @@
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 ![DSH](https://img.shields.io/badge/DSH-Plugin-4D6BFE)
 ![dsh-bundle](https://img.shields.io/badge/dsh-bundle%20plugin-4D6BFE)
-![tests](https://img.shields.io/badge/tests-12%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-14%20passing-brightgreen)
 
 </div>
 
@@ -164,7 +164,7 @@ dsh-opencode-go-usage/
 │   ├── start-browser-debug.bat  # 以调试端口 9222 启动独立 Edge(CDP 自动提取用)
 │   └── verify-cdp.mjs       # 端到端验证 CDP 提取(从 src/host.js 提取真实函数测试)
 ├── tests/
-│   └── test.mjs         # 12 个用例:聚合、口径过滤、静态降级、bundle 注册、i18n、官方源、失败冷却
+│   └── test.mjs         # 14 个用例:聚合、口径过滤、静态降级、bundle 注册、i18n、官方源、失败冷却、增量路径
 ├── cordis.patch.yml     # bundle 补丁层(插入插件行,inject webServer)
 ├── package.json         # dsh.bundle / dsh.client 声明
 └── README.md
@@ -199,7 +199,7 @@ dsh-opencode-go-usage/
 
 ```sh
 npm run build      # 构建 lib 产物 + 回归门禁
-npm test           # 12 个用例(node --test,零依赖)
+npm test           # 14 个用例(node --test,零依赖)
 npm run typecheck  # src 语法校验
 ```
 
