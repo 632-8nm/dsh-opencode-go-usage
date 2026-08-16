@@ -2,6 +2,12 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.20] - 2026-08-16
+
+### UI(标题栏图标化)
+- **标题栏按钮改 SVG 图标**:语言切换(🌐 地球,title 显示当前语言)、导出 CSV(↓ 下载箭头)、刷新(⟳ 环形箭头)、最大化/还原(□ / 重叠方块)、关闭(×)——内联 stroke 图标,`currentColor` 随主题变色,悬浮态不变;按钮改为 24×24 图标热区
+- 原文字按钮(t('btn.export') 等)不再显示,文案保留在 i18n 字典供 tooltip 使用
+
 ## [1.6.19] - 2026-08-16
 
 ### 功能(多 key 池 + rate-limited 状态)
