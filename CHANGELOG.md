@@ -2,6 +2,12 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [未发布] - 2026-08-16
+
+### 文档
+- **README 重写**:对齐 dsh-desktop 风格——顶部 banner 介绍图 + 徽章行 + 紧凑章节结构(特性/安装/使用/数据口径/开发/FAQ);同步全部最新行为口径(磁盘缓存不秒开、60s 轮询、对账说明、诊断日志)
+- **新增 `assets/banner.svg`** 介绍图(与 dsh-desktop 同款深色渐变 + 终端卡片 + 品牌色标题风格)
+
 ## [1.6.18] - 2026-08-16
 
 ### 行为(官方视图不再秒开缓存旧数据)

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" role="img" aria-label="dsh-opencode-go-usage — OpenCode Go 用量与花费面板">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1220"/>
+      <stop offset="1" stop-color="#141d3a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4d6bfe"/>
+      <stop offset="1" stop-color="#22c3a6"/>
+    </linearGradient>
+    <clipPath id="round">
+      <rect width="1200" height="300" rx="24"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#round)">
+  <rect width="1200" height="300" fill="url(#bg)"/>
+  <circle cx="1060" cy="40" r="190" fill="#4d6bfe" opacity="0.14"/>
+  <circle cx="120" cy="290" r="150" fill="#22c3a6" opacity="0.09"/>
+  <rect x="0" y="0" width="1200" height="6" fill="url(#accent)"/>
+  <g>
+    <rect x="80" y="70" width="430" height="170" rx="10" fill="#0a0f1e" stroke="#2a3558" stroke-width="1.5"/>
+    <circle cx="105" cy="96" r="6" fill="#ff5f57"/>
+    <circle cx="126" cy="96" r="6" fill="#febc2e"/>
+    <circle cx="147" cy="96" r="6" fill="#28c840"/>
+    <text x="174" y="102" font-family="ui-monospace,Consolas,monospace" font-size="13" fill="#8b96b8">dsh-opencode-go-usage</text>
+    <text x="100" y="142" font-family="ui-monospace,Consolas,monospace" font-size="15" fill="#9fb0d9">$ dsh plugin add ./dsh-opencode-go-usage</text>
+    <text x="100" y="167" font-family="ui-monospace,Consolas,monospace" font-size="15" fill="#d7e0f5">starting the usage panel</text>
+    <text x="100" y="192" font-family="ui-monospace,Consolas,monospace" font-size="15" fill="#22c3a6">usage.list ok · 13,893 records</text>
+    <text x="100" y="217" font-family="ui-monospace,Consolas,monospace" font-size="15" fill="#4d6bfe">quota 33% · FAB refresh 60s</text>
+  </g>
+  <text x="560" y="140" font-family="ui-monospace,Consolas,monospace" font-size="44" font-weight="700" fill="url(#accent)">dsh-opencode-go-usage</text>
+  <text x="564" y="178" font-family="ui-monospace,Consolas,monospace" font-size="21" fill="#9fb0d9">OpenCode Go — Usage &amp; Cost Panel</text>
+  <g font-family="ui-monospace,Consolas,monospace" font-size="13" fill="#c9d4f0">
+    <rect x="564" y="202" width="150" height="30" rx="8" fill="#161f3d" stroke="#2a3558" stroke-width="1"/>
+    <text x="639" y="222" text-anchor="middle">Win · macOS · Linux</text>
+    <rect x="726" y="202" width="132" height="30" rx="8" fill="#161f3d" stroke="#2a3558" stroke-width="1"/>
+    <text x="792" y="222" text-anchor="middle">DSH bundle plugin</text>
+    <rect x="870" y="202" width="112" height="30" rx="8" fill="#161f3d" stroke="#2a3558" stroke-width="1"/>
+    <text x="926" y="222" text-anchor="middle">real-time 60s</text>
+  </g>
+  </g>
+</svg>
