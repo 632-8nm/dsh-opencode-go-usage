@@ -423,6 +423,29 @@ test('配额:yaml 无池时回退 OPENCODE_GO_API_KEY 单 key', async () => {
   assert.equal(sent[0].active, true)
 })
 
+test('配额:yaml 单 key 与 auth.json CLI key 自动合并为多 key', async () => {
+  mkdirSync(FAKE_HOME, { recursive: true })
+  writeFileSync(join(FAKE_HOME, '.credentials.yaml'), 'OPENCODE_GO_API_KEY: sk-main-xxx\n', 'utf8')
+  // auth.json CLI 凭据(与 yaml 不同 key)
+  mkdirSync(join(FAKE_HOME, '.local', 'share', 'opencode'), { recursive: true })
+  writeFileSync(join(FAKE_HOME, '.local', 'share', 'opencode', 'auth.json'), JSON.stringify({ 'opencode-go': { key: 'sk-cli-xxx' } }), 'utf8')
+  const env = makeHostEnv({ dynamic: true, sessions: [] })
+  const m = await import(HOST_URL)
+  m.apply(env.ctx)
+  await env.handlers.get('ocgo-usage:fetch')(null)
+  const cmd = env.shellCalls.find((c) => c.includes('OCGO_KEYS_JSON'))
+  assert.ok(cmd, '应走多 key python 通道')
+  const b64 = cmd.match(/OCGO_KEYS_JSON'\]='([A-Za-z0-9+/=]+)'/)
+  assert.ok(b64, '应携带 base64 编码的 key 列表')
+  const sent = JSON.parse(Buffer.from(b64[1], 'base64').toString('utf8'))
+  assert.equal(sent.length, 2, 'yaml 单 key 与 auth.json CLI key 应合并')
+  assert.equal(sent[0].name, 'default')
+  assert.equal(sent[0].active, true, 'yaml key 应标记为当前生效')
+  assert.equal(sent[1].name, 'cli')
+  assert.equal(sent[1].active, false)
+  assert.equal(sent[1].key, 'sk-cli-xxx')
+})
+
 test('口径:DSH 源只统计 opencode-go provider,其它 provider 被排除', async () => {
   const sessions = [
     // deepseek 直连(非 Go key)→ 应被排除

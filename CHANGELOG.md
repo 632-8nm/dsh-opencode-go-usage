@@ -2,6 +2,18 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.21] - 2026-08-16
+
+### 功能(多 key 效果立即可见)
+- **自动合并 OpenCode CLI 凭据**:`discoverGoKeys` 在 yaml 来源之外,统一追加 `~/.local/share/opencode/auth.json` 的 `opencode-go.key`(去重,存在即加入,命名为 `cli`;仅剩它一个时才标记 active)——你的环境(yaml 单 key + CLI key 是同一账号的两个真实 key)重启后配额区立即显示 **default ★ / cli 两个 key 标签**,多 key 切换、⚠ 失败标记、FAB/告警跟随选中 key 的效果马上可见
+- 重构 keyNames/池/单 key 的优先链为统一追加结构(auth.json 追加不再被提前 return 跳过)
+
+### 验证
+- **key 名字无法从服务端获取**(实测):workspaces API 只返回 `wrk_xxx`(167 字节)、usage 页面 HTML 无任何 name/email 字段、配额 API 只有 percent/status/resetsAt、7 个猜测端点(api/me、zen/account 等)全部 404——OpenCode Go 不暴露账户名/key 显示名,key 名字只能来自本地配置(这正是面板显示 default/cli/配置条目名的原因)
+
+### 测试
+- 新增用例:yaml 单 key + auth.json CLI key 自动合并(2 key,active 标记正确);套件 17 → 18
+
 ## [1.6.20] - 2026-08-16
 
 ### UI(标题栏图标化)
