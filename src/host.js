@@ -358,35 +358,13 @@ return {
       '        print(json.dumps(out))',
       '        raise SystemExit',
       'if not CK or not WID:',
-      '    try:',
-      '        CK = None',
-      '        src_browser = None',
-      '        # 1) 调试端口 CDP(浏览器自身解密,v20 也可用)——唯一自动提取通道',
-      '        for port in (9222, 9223, 9224, 9225, 9226, 9227, 9228, 9229, 9230):',
-      '            try:',
-      '                CK = cdp_fetch_cookie(port)',
-      '            except Exception:',
-      '                CK = None',
-      '            if CK:',
-      '                src_browser = "CDP:%d" % port',
-      '                break',
-      '        # 调试浏览器未启动/未登录 → 引导一键启动(面板按钮)',
-      '        if not CK: raise RuntimeError("NO_BROWSER")',
-      '        WID = fetch_workspace_id(CK)',
-      '        if not WID: raise RuntimeError("WS_PARSE_FAIL")',
-      '        try:',
-      '            os.makedirs(os.path.dirname(CFG), exist_ok=True)',
-      '            with open(CFG, "w", encoding="utf-8") as fh:',
-      '                json.dump({"authCookie": CK, "workspaceId": WID}, fh, ensure_ascii=False)',
-      '            out["autoExtracted"] = True',
-      '            out["browser"] = src_browser',
-      '        except Exception:',
-      '            pass',
-      '    except Exception as e:',
-      '        code = str(e)',
-      '        out["error"] = code if code in ("NO_BROWSER", "WS_PARSE_FAIL") else repr(e)[:200]',
-      '        print(json.dumps(out))',
-      '        raise SystemExit',
+      '    # 去除 CDP 自动提取:浏览器调试端口在 Windows 上因残留进程常被 merge 忽略,',
+      '    # 自动提取实际不可靠。改为直接要求用户在面板手动粘贴一次凭据(authCookie + workspaceId),',
+      '    # 保存后插件自动读取配置,无需再走浏览器/cookie/调试端口。',
+      '    out["error"] = "NEED_CONFIG"',
+      '    out["autoExtracted"] = False',
+      '    print(json.dumps(out))',
+      '    raise SystemExit',
       'def fetch_text(page):',
       '    args = urllib.parse.quote(json.dumps([WID, page]))',
       '    url = "https://opencode.ai/_server?id=%s&args=%s" % (FID, args)',
@@ -926,13 +904,10 @@ return {
           if (!p || !p.ok) {
             ocgoLog('collectOfficial not ok: ' + ((p && p.error) || 'no data'))
             officialErrAt = Date.now()
-            officialCache = { at: Date.now(), data: { ok: false, error: (p && p.error) || 'unknown' } }
-            // 首次无凭据(NO_BROWSER)→ 自动拉起调试浏览器并轮询重试(打开即自动提取)
-            if ((p && p.error) === 'NO_BROWSER') {
-              // autoEnsureBrowserAndRetry 内部成功时会自行 syncOfficialToCache;
-              // 这里仅触发,不重复同步。
-              void autoEnsureBrowserAndRetry()
-            }
+            // 无配置/无凭据 → 直接提示用户在面板粘贴一次凭据(已去除 CDP 自动提取,
+            // 浏览器调试端口在 Windows 常因残留进程被 merge 忽略,自动提取不可靠)。
+            const code = (p && p.error) || 'unknown'
+            officialCache = { at: Date.now(), data: { ok: false, error: code === 'NEED_CONFIG' ? 'NEED_CONFIG' : code } }
             return officialCache.data
           }
           if (p.skippedPages) ocgoLog('collectOfficial skipped pages: ' + p.skippedPages)
@@ -955,51 +930,8 @@ return {
       }
     }
 
-    // 自动提取辅助:首次无凭据(NO_BROWSER)时自动拉起调试浏览器,并轮询
-    // 9222 直到 CDP 能读到 cookie,再自动重试抓取——实现"打开即自动提取",
-    // 不再要求用户手动点"一键启动"。
-    let autoEnsureInflight = null
-    let autoEnsureAt = 0
-    async function autoEnsureBrowserAndRetry() {
-      // 并发去重 + 5 分钟节流:避免 60s 轮询反复拉浏览器。
-      if (autoEnsureInflight) return autoEnsureInflight
-      if (Date.now() - autoEnsureAt < 5 * 60 * 1000) return null
-      autoEnsureAt = Date.now()
-      autoEnsureInflight = (async () => {
-        try {
-          // 1) 拉起调试浏览器(独立 profile,首次会弹出登录窗)
-          const r = await launchDebugBrowser()
-          if (!r || !r.ok) {
-            ocgoLog('autoEnsure launch browser: ' + ((r && r.error) || 'fail'))
-            return null
-          }
-          // 2) 轮询 9222:最多等 90s,一旦 CDP 读到 cookie 就停止并触发重试
-          const deadline = Date.now() + 90 * 1000
-          while (Date.now() < deadline) {
-            try {
-              const p = await runOfficial([])
-              if (p && p.ok) {
-                // 提取成功:同步进缓存,清失败冷却,让前端立即拿到真实数据
-                const data = toOfficialData(p)
-                syncOfficialToCache(data)
-                officialErrAt = 0
-                ocgoLog('autoEnsure extracted: ' + (data.records || 0) + ' records')
-                return data
-              }
-            } catch (e) { /* 未就绪/未登录,继续等 */ }
-            await new Promise((res) => setTimeout(res, 3000))
-          }
-          ocgoLog('autoEnsure timeout waiting for login')
-          return null
-        } catch (e) {
-          ocgoLog('autoEnsure failed: ' + String((e && e.message) || e))
-          return null
-        } finally {
-          autoEnsureInflight = null
-        }
-      })()
-      return autoEnsureInflight
-    }
+    // 已去除 CDP 自动提取:浏览器调试端口在 Windows 常因残留进程被 merge 忽略,
+    // 自动提取不可靠。官方明细改为"面板手动粘贴一次凭据"后自动读取。
 
     // 增量刷新:磁盘缓存过期时只抓新增页(日常仅 1-3 页,秒级完成);
     // python 端读旧盘合并去重后写回,host 同步更新内存缓存。
@@ -1096,7 +1028,12 @@ return {
     }
 
     async function fetchAll() {
-      if (cache && Date.now() - cache.at < 45000) return cache.data
+      // 若 officialCache 已定论(NEED_CONFIG 需手动粘贴 / 抓取成功),不要复用
+      // 45s 缓存里可能存的"旧 loading 占位"——否则前端会一直转"加载中"直到
+      // 缓存过期。定论后应重建响应,让前端尽快显示表单或数据。
+      const officialSettled = !!(officialCache && officialCache.data
+        && (officialCache.data.ok || officialCache.data.error === 'NEED_CONFIG'))
+      if (cache && !officialSettled && Date.now() - cache.at < 45000) return cache.data
       if (inflight) return inflight
       inflight = (async () => {
         const quotaP = collectQuota().catch(() => ({ error: 'quota 异常' }))
@@ -1151,7 +1088,12 @@ return {
         // 竞态兜底:后台抓取(增量/全量)可能早于本响应完成,其 sync 未命中
         // cache(当时 cache 还没赋值)——用最新 officialCache 覆盖 loading 占位,
         // 保证"数据到位后立即展示真实数据"而不是等到下一个轮询周期。
-        if (officialCache && officialCache.data.ok) data.official = officialCache.data
+        // NEED_CONFIG(需要手动粘贴)也属"后台已定论"结果,必须覆盖 loading,
+        // 否则前端的 45s cache 一直缓存 loading 占位,用户要干等缓存过期才见表单。
+        if (officialCache && officialCache.data
+          && (officialCache.data.ok || officialCache.data.error === 'NEED_CONFIG')) {
+          data.official = officialCache.data
+        }
         cache = { at: Date.now(), data }
         return data
       })()
@@ -1297,7 +1239,8 @@ return {
     const harnessApi = (typeof harness !== 'undefined' && harness) ? harness : null
     if (harnessApi && typeof harnessApi.handle === 'function') {
       ctx.effect(() => harnessApi.handle('ocgo-usage:fetch', serve))
-      ctx.effect(() => harnessApi.handle('ocgo-usage:launch-browser', launchDebugBrowser))
+      // 已去除 CDP 自动提取,不再注册 launch-browser(官方凭据改为面板手动粘贴)。
+      // ctx.effect(() => harnessApi.handle('ocgo-usage:launch-browser', launchDebugBrowser))
     }
     // bundle 模式没有 harness 桥:改走 webServer 的本地 HTTP 路由,
     // 客户端同源 fetch('/ocgo-usage/fetch') 取数,两种加载模式都可用。
@@ -1339,20 +1282,14 @@ return {
           }
         },
       }))
-      // 一键启动调试浏览器:POST → 弹出独立调试窗口(登录用),不等待退出
+      // 已去除 CDP 自动提取,launch-browser 端点不再提供(官方凭据改为面板手动粘贴)。
       ctx.effect(() => ws.register({
         kind: 'exact',
         path: '/ocgo-usage/launch-browser',
         handler: async (req, res) => {
-          try {
-            if (req.method !== 'POST') { res.writeHead(405); res.end(); return }
-            const r = await launchDebugBrowser()
-            res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify(r))
-          } catch (e) {
-            res.writeHead(400, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ ok: false, error: String((e && e.message) || e) }))
-          }
+          if (req.method !== 'POST') { res.writeHead(405); res.end(); return }
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'disabled' }))
         },
       }))
     }
