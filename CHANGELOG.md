@@ -2,6 +2,14 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.23] - 2026-08-16
+
+### 修复(官方视图"最近会话"列表上下重复——issue 632-8nm)
+- **双根因**:
+  1. **React key 全部相同**:官方视图 recent 由 DSH 会话回填构造,但 id 是常量 `'s'`——列表 8 行 key 相同,数据更新时 React reconciliation 错乱,同一批会话"上下重复",手动刷新重建后才恢复;改为**真实会话 id**
+  2. **竞态换对象**:recent 回填原本改的是 `off`,而响应构建期间后台增量完成会触发竞态覆盖把 `data.official` 换成新抓取对象(其 recent 未回填)——回填改为**对最终 `data.official` 操作**
+- 新增用例:官方视图 recent 的 id 唯一且为真实会话 id、金额为数值;套件 19 → 20
+
 ## [1.6.22] - 2026-08-16
 
 ### 修复(一键启动调试浏览器"假成功"——提示已弹出但无窗口/9222 未监听)

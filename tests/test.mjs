@@ -469,6 +469,36 @@ test('一键启动调试浏览器:成功返回 ok,未监听返回明确错误(�
   assert.ok(String(fail.error).includes('NO_LISTEN'), '应返回 NO_LISTEN 明确报错: ' + fail.error)
 })
 
+test('官方视图"最近会话":id 唯一且为真实会话 id(React key 防重复渲染)', async () => {
+  const realNow = Date.now
+  let now = realNow()
+  Date.now = () => now
+  try {
+    const sessions = [
+      { id: 'sess-a', title: '会话A', events: [mkAssistantEvent('deepseek-v4-flash', 'opencode-go', mkUsage({ inputTokens: 100 }))] },
+      { id: 'sess-b', title: '会话B', events: [mkAssistantEvent('deepseek-v4-flash', 'opencode-go', mkUsage({ inputTokens: 200 }))] },
+      { id: 'sess-c', title: '会话C', events: [mkAssistantEvent('deepseek-v4-flash', 'opencode-go', mkUsage({ inputTokens: 300 }))] },
+    ]
+    const env = makeHostEnv({ dynamic: true, sessions })
+    const m = await import(HOST_URL)
+    m.apply(env.ctx)
+    const handle = env.handlers.get('ocgo-usage:fetch')
+    await handle(null)
+    await new Promise((r) => setTimeout(r, 20)) // 等后台扫描 + 官方 mock 完成
+    now += 50_000 // 越过 45s 聚合缓存,触发一次真正 fetchAll(官方回填 recent)
+    const data = await handle(null)
+    const recent = data.official && data.official.ok ? data.official.vd.recent : null
+    assert.ok(recent && recent.length >= 2, '官方视图应有最近会话(实际: ' + (recent ? recent.length : 'null') + ')')
+    const ids = recent.map((s) => s.id)
+    assert.equal(new Set(ids).size, ids.length, '最近会话 id 必须唯一(防 React key 冲突导致上下重复)')
+    assert.ok(ids.every((id) => id !== 's' && id.length > 1), 'id 必须是真实会话 id,而非常量 s')
+    // 金额为官方回填值(数值)
+    for (const s of recent) assert.equal(typeof s.cost_est, 'number')
+  } finally {
+    Date.now = realNow
+  }
+})
+
 test('口径:DSH 源只统计 opencode-go provider,其它 provider 被排除', async () => {
   const sessions = [
     // deepseek 直连(非 Go key)→ 应被排除

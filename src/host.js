@@ -1039,26 +1039,30 @@ return {
         const dshRows = backfillDsh(dshRaw, off && off.ok && off.rows ? off.rows : null)
         const dsh = buildView(dshRows)
         dsh.matchedOfficial = dshRows.matchedOfficial || 0
-        // 官方视图"最近会话":usage.list 没有会话标题,按时间回填的 DSH 会话
-        // 补上标题并按会话聚合(金额为官方回填值),避免整列"(无标题)"。
-        if (off && off.ok && off.vd && dshRows.length) {
-          const bySession = new Map()
-          for (const r of dshRows) {
-            const s = bySession.get(r.id) || (bySession.set(r.id, { title: null, cost: 0, updated: r.time }), bySession.get(r.id))
-            if (!s.title && r.title) s.title = r.title
-            if (r.costOfficial != null) s.cost += r.costOfficial
-            if (r.time > s.updated) s.updated = r.time
-          }
-          off.vd.recent = Array.from(bySession.values())
-            .sort((a, b) => b.updated - a.updated)
-            .slice(0, 8)
-            .map((s) => ({ id: 's', title: s.title, cost_est: Math.round(s.cost * 10000) / 10000, updated: s.updated }))
-        }
         const data = { ok: true, fetchedAt: Date.now(), quota: quota.error ? null : quota, quotaError: quota.error || null, dsh, dshLoading: !(lastScan && lastScan.rows), official: off || officialErr || { ok: false, loading: true } }
         // 竞态兜底:后台抓取(增量/全量)可能早于本响应完成,其 sync 未命中
         // cache(当时 cache 还没赋值)——用最新 officialCache 覆盖 loading 占位,
         // 保证"数据到位后立即展示真实数据"而不是等到下一个轮询周期。
         if (officialCache && officialCache.data.ok) data.official = officialCache.data
+        // 官方视图"最近会话":usage.list 没有会话标题,按时间回填的 DSH 会话
+        // 补上标题并按会话聚合(金额为官方回填值),避免整列"(无标题)"。
+        // 必须对最终 data.official 操作:竞态覆盖可能刚换掉对象,只改 off 会被
+        // 换掉导致 recent 空/旧。id 用真实会话 id——曾用常量 's' 使 React key
+        // 全部相同,数据更新时列表渲染错乱:同一批会话"上下重复"(issue 632-8nm)。
+        const finalOff = (data.official && data.official.ok) ? data.official : null
+        if (finalOff && finalOff.vd && dshRows.length) {
+          const bySession = new Map()
+          for (const r of dshRows) {
+            const s = bySession.get(r.id) || (bySession.set(r.id, { id: r.id, title: null, cost: 0, updated: r.time }), bySession.get(r.id))
+            if (!s.title && r.title) s.title = r.title
+            if (r.costOfficial != null) s.cost += r.costOfficial
+            if (r.time > s.updated) s.updated = r.time
+          }
+          finalOff.vd.recent = Array.from(bySession.values())
+            .sort((a, b) => b.updated - a.updated)
+            .slice(0, 8)
+            .map((s) => ({ id: s.id, title: s.title, cost_est: Math.round(s.cost * 10000) / 10000, updated: s.updated }))
+        }
         cache = { at: Date.now(), data }
         return data
       })()
