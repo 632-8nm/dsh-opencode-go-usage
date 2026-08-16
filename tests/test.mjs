@@ -11,7 +11,8 @@
 // 运行:`node --test` 或 `npm test`
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync, renameSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createContext, runInContext } from 'node:vm'
@@ -20,9 +21,28 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const HOST_URL = pathToFileURL(join(root, 'lib', 'index.js'))
 
 // ---------------------------------------------------------------------------
+// 测试隔离:官方磁盘缓存是真实用户数据。fetchAll 会读
+// ~/.config/dsh-opencode-go-usage-official.json(开发机上真实存在),为保持
+// 用例封闭,套件运行期间暂时移开该文件,结束后原样还原(不会触碰凭据配置)。
+// ---------------------------------------------------------------------------
+const DISK_CACHE = join(homedir(), '.config', 'dsh-opencode-go-usage-official.json')
+const DISK_CACHE_BAK = DISK_CACHE + '.testbak'
+let diskMoved = false
+test.before(() => {
+  try {
+    if (existsSync(DISK_CACHE)) { renameSync(DISK_CACHE, DISK_CACHE_BAK); diskMoved = true }
+  } catch (e) { /* 隔离失败则用例按无磁盘缓存运行 */ }
+})
+test.after(() => {
+  try {
+    if (diskMoved && existsSync(DISK_CACHE_BAK)) renameSync(DISK_CACHE_BAK, DISK_CACHE)
+  } catch (e) { /* 还原失败仅记录 */ }
+})
+
+// ---------------------------------------------------------------------------
 // 工具:构造一次 apply 调用环境,可注入 fake services,并捕获 harness.handle
 // ---------------------------------------------------------------------------
-function makeHostEnv({ dynamic = true, sessions = [] } = {}) {
+function makeHostEnv({ dynamic = true, sessions = [], officialResult = null } = {}) {
   const handlers = new Map()
   const fakeHarness = { handle: (method, fn) => { handlers.set(method, fn); return () => handlers.delete(method) } }
   // 动态模式模拟:dsh-cordis-host-runner 沙箱把 harness/btoa 作为全局。
@@ -39,8 +59,9 @@ function makeHostEnv({ dynamic = true, sessions = [] } = {}) {
       if (spec.command.includes('zen/go/v1/usage')) {
         return { exitCode: 0, stdout: { text: JSON.stringify({ usage: { rolling: { percent: 30, status: 'ok', resetsAt: 1787000000000 }, weekly: { percent: 12, status: 'ok', resetsAt: 1787000000000 } } }) }, stderr: { text: '' } }
       }
-      // 官方 usage.list(mock 空记录,避免测试联网)
-      return { exitCode: 0, stdout: { text: JSON.stringify({ ok: true, records: [], truncated: false }) }, stderr: { text: '' } }
+      // 官方 usage.list(mock,避免测试联网):默认空记录,可注入失败结果
+      const payload = officialResult ?? { ok: true, records: [], truncated: false }
+      return { exitCode: 0, stdout: { text: JSON.stringify(payload) }, stderr: { text: '' } }
     },
   }
 
@@ -116,6 +137,79 @@ test('动态模式:注册 ocgo-usage:fetch 并正确聚合多数据源', async (
   // 两次调用:45s 缓存应复用同一对象(并发去重也生效)
   const again = await handle(null)
   assert.equal(again, data, '45s 缓存内应返回同一对象')
+})
+
+test('官方失败 60s 冷却:不重复全量抓取,冷却过后自动重试', async () => {
+  const realNow = Date.now
+  let now = realNow()
+  Date.now = () => now
+  try {
+    const env = makeHostEnv({ dynamic: true, sessions: [], officialResult: { ok: false, error: 'mock-offline' } })
+    const m = await import(HOST_URL)
+    m.apply(env.ctx)
+    const handle = env.handlers.get('ocgo-usage:fetch')
+    const officialRuns = () => env.shellCalls.filter((c) => c.includes('base64') && !c.includes('zen/go/v1/usage')).length
+
+    // t0:首次拉取,官方在后台失败(响应为 loading;等后台落定)
+    const d0 = await handle(null)
+    assert.equal(d0.official.ok, false)
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(officialRuns(), 1, '首次应执行一次官方抓取')
+    const afterFirst = officialRuns()
+
+    // t0+50s:越过 45s 聚合缓存,仍在 60s 失败冷却内 → 不再执行官方脚本,错误透传
+    now += 50_000
+    const d1 = await handle(null)
+    assert.equal(d1.official.ok, false)
+    assert.equal(d1.official.error, 'mock-offline', '错误应原样透传面板展示')
+    assert.equal(officialRuns(), afterFirst, '冷却期内不得重复全量抓取')
+
+    // t0+100s:再越过 45s 聚合缓存(冷却已过期)→ 自动重试一次
+    now += 50_000
+    await handle(null)
+    assert.equal(officialRuns(), afterFirst + 1, '冷却过期后应自动重试')
+  } finally {
+    Date.now = realNow
+  }
+})
+
+// ---------------------------------------------------------------------------
+// 2b. 官方失败冷却(续):重试成功后恢复正常数据流
+// ---------------------------------------------------------------------------
+test('官方抓取成功后 official 变为可用数据(冷却被清除)', async () => {
+  const realNow = Date.now
+  let now = realNow()
+  Date.now = () => now
+  try {
+    let fail = true
+    const env = makeHostEnv({ dynamic: true, sessions: [], officialResult: null })
+    // 第一次返回失败,之后返回成功(空记录)
+    const shell = env.ctx.get('shell')
+    const origRun = shell.run
+    shell.run = async (spec) => {
+      if (spec.command.includes('base64') && !spec.command.includes('zen/go/v1/usage') && fail) {
+        return { exitCode: 0, stdout: { text: JSON.stringify({ ok: false, error: 'mock-offline' }) }, stderr: { text: '' } }
+      }
+      return origRun(spec)
+    }
+    const m = await import(HOST_URL)
+    m.apply(env.ctx)
+    const handle = env.handlers.get('ocgo-usage:fetch')
+
+    // t0:首次拉取,官方在后台失败
+    await handle(null)
+    await new Promise((r) => setTimeout(r, 10))
+    now += 70_000 // 越过 45s 聚合缓存 + 60s 失败冷却
+    fail = false
+    await handle(null) // 触发自动重试(后台)
+    await new Promise((r) => setTimeout(r, 10))
+    now += 50_000 // 越过 45s 聚合缓存,让重试结果进入响应
+    const d2 = await handle(null)
+    assert.equal(d2.official.ok, true, '重试成功后 official 应为可用数据')
+    assert.equal(d2.official.truncated, false)
+  } finally {
+    Date.now = realNow
+  }
 })
 
 test('口径:DSH 源只统计 opencode-go provider,其它 provider 被排除', async () => {

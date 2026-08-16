@@ -10,7 +10,7 @@
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 ![DSH](https://img.shields.io/badge/DSH-Plugin-4D6BFE)
 ![dsh-bundle](https://img.shields.io/badge/dsh-bundle%20plugin-4D6BFE)
-![tests](https://img.shields.io/badge/tests-10%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-12%20passing-brightgreen)
 
 </div>
 
@@ -33,7 +33,7 @@
 | ⚠️ | **配额告警条** | 任一窗口 ≥90% 时面板顶部醒目提示(FAB 同步变色) |
 | ⬇️ | **CSV 导出** | 标题栏一键导出当前视图(统计/配额/按模型/最近会话) |
 | 🌐 | **中英切换** | 面板标题栏一键切换(EN/中),记忆选择;未手动选择时跟随 DSH 全局语言 |
-| ⚡ | **加载性能** | 首次全量抓取约 10-15 秒(16 并发);之后磁盘缓存 0.1s、过期增量刷新 1.5s;会话扫描 5 分钟缓存,轮询零负载 |
+| ⚡ | **加载性能** | 首次全量抓取约 10-15 秒(12 并发);之后磁盘缓存 0.1s、过期增量刷新 1.5s;会话扫描 5 分钟缓存,轮询零负载 |
 
 ## 📸 界面预览
 
@@ -85,6 +85,7 @@ OpenCode Go 的限额与定价来自 [opencode.ai/docs/go](https://opencode.ai/d
 ```
 
 - **面板主数据源为官方 `usage.list`**(账户级逐请求官方计费,与官网账单一致、跨设备、不受本地数据丢失影响);`DSH` 视图保留会话级分析
+- **抓取上限**:页数上限 5000(默认,约 25 万条,可在配置 `maxPages` 覆盖),超出上限或抓取中途跳页时面板 foot 会标注"数据截断";单页失败只跳过该页,连续 5 页失败才判定数据尽头
 - **DSH 金额精度**:先用官方定价估算(cache 按会话增量 × 实测单价 $0.031/M),再与官方逐请求记录按(模型 + ±60s + token ±30%)匹配,匹配到的记录**直接用官方 cost**(实测匹配率 83%,金额从估算 $2.57 修正为官方 $8.44);未匹配的保持估算(如 8-14 数据目录迁移前的丢失会话)
 - **来源口径**:DSH 分析只统计 `source.provider == 'opencode-go'`;deepseek 直连、opencode 免费模型等非 Go key 流量不计入
 - **官方明细不可用时**:官方视图只显示配额环形图 + 状态横幅(含一键启动按钮与手动粘贴),不显示 DSH 数据充数;DSH 数据仅在 DSH 视图展示
@@ -163,7 +164,7 @@ dsh-opencode-go-usage/
 │   ├── start-browser-debug.bat  # 以调试端口 9222 启动独立 Edge(CDP 自动提取用)
 │   └── verify-cdp.mjs       # 端到端验证 CDP 提取(从 src/host.js 提取真实函数测试)
 ├── tests/
-│   └── test.mjs         # 10 个用例:聚合、口径过滤、静态降级、bundle 注册、i18n、官方源
+│   └── test.mjs         # 12 个用例:聚合、口径过滤、静态降级、bundle 注册、i18n、官方源、失败冷却
 ├── cordis.patch.yml     # bundle 补丁层(插入插件行,inject webServer)
 ├── package.json         # dsh.bundle / dsh.client 声明
 └── README.md
@@ -198,7 +199,7 @@ dsh-opencode-go-usage/
 
 ```sh
 npm run build      # 构建 lib 产物 + 回归门禁
-npm test           # 10 个用例(node --test,零依赖)
+npm test           # 12 个用例(node --test,零依赖)
 npm run typecheck  # src 语法校验
 ```
 

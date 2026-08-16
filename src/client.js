@@ -17,7 +17,6 @@ return {
     const I18N = {
       zh: {
         'title': 'OpenCode Go 用量',
-        'view.all': '全部',
         'view.dsh': 'DSH',
         'view.official': '官方',
         'official.err': '官方数据不可用: {e}',
@@ -33,10 +32,8 @@ return {
         'official.widPh': 'workspaceId(usage 页面地址栏 wrk_xxx)',
         'official.save': '保存并刷新',
         'official.saved': '已保存,刷新中…',
-        'official.auto': '已自动从 Edge 提取凭据',
         'foot.official': '官方账户级 usage.list · 更新 {t}',
-        'foot.officialTrunc': '官方数据截断(仅最近 7500 条)',
-        'srcs.title': '数据源',
+        'foot.officialTrunc': '官方数据截断(超出抓取页数上限)',
         'src.quota': '配额 API',
         'stat.today': '今日',
         'stat.month': '本月',
@@ -77,8 +74,6 @@ return {
         'foot.est': '金额: 官方 cost + 定价估算',
         'foot.upd': '更新 {t}',
         'foot.int': '60s 自动刷新',
-        'foot.ocgoErr': 'opencode 记录不可用: {e}',
-        'foot.codexErr': 'codex 记录不可用: {e}',
         'foot.recon': '官方月 {o} · 本地 {l}',
         'foot.reconTitle': '官方账户级估算 vs 本机三源记录,差 {d}(缺口可能来自其它设备/网页端)',
         'load': '加载中…',
@@ -101,7 +96,6 @@ return {
       },
       en: {
         'title': 'OpenCode Go Usage',
-        'view.all': 'All',
         'view.dsh': 'DSH',
         'view.official': 'Official',
         'official.err': 'Official data unavailable: {e}',
@@ -117,10 +111,8 @@ return {
         'official.widPh': 'workspaceId (wrk_xxx from usage page URL)',
         'official.save': 'Save & refresh',
         'official.saved': 'Saved, refreshing…',
-        'official.auto': 'Credentials auto-extracted from Edge',
         'foot.official': 'Official account-level usage.list · updated {t}',
-        'foot.officialTrunc': 'Official data truncated (recent 7500 only)',
-        'srcs.title': 'Sources',
+        'foot.officialTrunc': 'Official data truncated (over fetch page cap)',
         'src.quota': 'Quota API',
         'stat.today': 'Today',
         'stat.month': 'This month',
@@ -161,8 +153,6 @@ return {
         'foot.est': 'Cost: official + estimated',
         'foot.upd': 'Updated {t}',
         'foot.int': 'Auto-refresh 60s',
-        'foot.ocgoErr': 'opencode records unavailable: {e}',
-        'foot.codexErr': 'codex records unavailable: {e}',
         'foot.recon': 'Official {o}/mo · Local {l}',
         'foot.reconTitle': 'Official (account-level) vs local 3-source records, diff {d} (gap may come from other devices / web)',
         'load': 'Loading…',
@@ -643,7 +633,11 @@ return {
         let last = null
         const onMove = (ev) => {
           if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 4) moved = true
-          last = { x: bx + ev.clientX - sx, y: by + ev.clientY - sy }
+          // 视口钳制:与面板拖动一致,FAB 不允许被拖出屏幕外
+          last = {
+            x: Math.min(Math.max(0, bx + ev.clientX - sx), window.innerWidth - 60),
+            y: Math.min(Math.max(0, by + ev.clientY - sy), window.innerHeight - 40),
+          }
           setFabPos(last)
         }
         const onUp = () => {
