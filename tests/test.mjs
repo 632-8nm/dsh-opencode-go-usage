@@ -11,8 +11,8 @@
 // 运行:`node --test` 或 `npm test`
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, existsSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { readFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createContext, runInContext } from 'node:vm'
@@ -21,24 +21,26 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const HOST_URL = pathToFileURL(join(root, 'lib', 'index.js'))
 
 // ---------------------------------------------------------------------------
-// 测试隔离:官方磁盘缓存是真实用户数据。fetchAll 会读
-// ~/.config/dsh-opencode-go-usage-official.json(开发机上真实存在),为保持
-// 用例封闭,套件运行期间暂时移开该文件,结束后原样还原(不会触碰凭据配置)。
-// 部分用例会在此路径写入假缓存,after 钩子统一清理后再还原真实文件。
+// 测试隔离:lib/index.js 的 fs 访问全部经 os.homedir()(每次调用读环境变量),
+// 套件把 USERPROFILE/HOME 重定向到临时目录——磁盘缓存、凭据配置、诊断日志
+// 全部落在临时 HOME,绝不触碰真实用户文件(此前把真实缓存移开再还原,且
+// ocgoLog 会把测试噪声写进真实 ~/.config 日志)。
 // ---------------------------------------------------------------------------
-const DISK_CACHE = join(homedir(), '.config', 'dsh-opencode-go-usage-official.json')
-const DISK_CACHE_BAK = DISK_CACHE + '.testbak'
-let diskMoved = false
+const FAKE_HOME = mkdtempSync(join(tmpdir(), 'ocgo-test-home-'))
+const SAVED_HOME_ENV = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME }
+const DISK_CACHE = join(FAKE_HOME, '.config', 'dsh-opencode-go-usage-official.json')
 test.before(() => {
-  try {
-    if (existsSync(DISK_CACHE)) { renameSync(DISK_CACHE, DISK_CACHE_BAK); diskMoved = true }
-  } catch (e) { /* 隔离失败则用例按无磁盘缓存运行 */ }
+  process.env.USERPROFILE = FAKE_HOME
+  process.env.HOME = FAKE_HOME
 })
 test.after(() => {
   try {
-    if (existsSync(DISK_CACHE)) rmSync(DISK_CACHE, { force: true }) // 测试写入的假缓存
-    if (diskMoved && existsSync(DISK_CACHE_BAK)) renameSync(DISK_CACHE_BAK, DISK_CACHE)
+    if (SAVED_HOME_ENV.USERPROFILE === undefined) delete process.env.USERPROFILE
+    else process.env.USERPROFILE = SAVED_HOME_ENV.USERPROFILE
+    if (SAVED_HOME_ENV.HOME === undefined) delete process.env.HOME
+    else process.env.HOME = SAVED_HOME_ENV.HOME
   } catch (e) { /* 还原失败仅记录 */ }
+  rmSync(FAKE_HOME, { recursive: true, force: true })
 })
 
 // ---------------------------------------------------------------------------
@@ -261,6 +263,7 @@ test('增量:截断的磁盘缓存触发一次强制全量重建(12h 节流,之�
         { ts: '08/16/2026 02:00:00', model: 'deepseek-v4-pro', ti: 200, to: 80, rt: 0, cr: 0, cost: 456 },
       ],
     }
+    mkdirSync(join(FAKE_HOME, '.config'), { recursive: true })
     writeFileSync(DISK_CACHE, JSON.stringify(fake), 'utf8')
     const env = makeHostEnv({ dynamic: true, sessions: [] })
     const m = await import(HOST_URL)

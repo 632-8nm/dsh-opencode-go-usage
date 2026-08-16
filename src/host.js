@@ -77,26 +77,17 @@ return {
     // 45s 进程内缓存:面板打开与 60s 定时刷新共用一次计算。
     let cache = null
 
-    // 有界并发读取全部会话(默认 4 并发)。
-    async function mapLimit(items, limit, fn) {
-      const out = new Array(items.length)
-      let i = 0
-      async function worker() {
-        while (i < items.length) {
-          const idx = i++
-          out[idx] = await fn(items[idx], idx)
-        }
-      }
-      await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
-      return out
-    }
-
     // --- DSH 会话分析(官方 usage.list 是账户级总额,无法区分来源应用;
     // 本分析单独统计 DSH 这个工具经 opencode-go 的用量,保留会话级视角) ---
     // 金额精度:先用官方定价估算(缓存增量法);再与官方 usage.list 逐请求记录按
     // (模型 + 时间窗口 + token 近似)匹配,匹配到的行用官方 cost 精确回填。
     // DSH 会话扫描(慢:逐个读会话事件)。与官方段1 拉取并行执行,
     // 回填是纯内存操作(backfillDsh),不重复扫描。
+    // 内存约束:流式扫描,最多 SCAN_CONCURRENCY 个会话同时驻留,行提取后快照
+    // 立即释放——此前 24 并发 + 全量驻留,会话库几百 MB 压缩时所有会话事件
+    // 同时解压成 JS 对象,瞬时峰值可达 GB 级,实测把 DSH 服务 V8 堆撑爆到
+    // 4GB 上限(FATAL ERROR: Ineffective mark-compacts,退出码 134,服务被
+    // V8 直接杀死)。并发降到 6 后峰值约为原来的 1/4,且每块处理完即被 GC。
     async function collectDshScan() {
       const out = []
       const sessions = await sq.listSessions()
@@ -110,41 +101,48 @@ return {
           }
         }
       } catch (e) { /* titles are best-effort */ }
-      const snaps = await mapLimit(sessions, 24, (rec) => sq.readSession(rec.header.id).catch(() => null))
       // DSH 事件的 cacheReadTokens 是"会话累计上下文快照"(单调递增),直接求和会
       // 重复累计造成虚高(实测 12 会话可假算出 733M)。正确口径:按会话取相邻增量
       // (每次新增的缓存上下文),首条计全量(会话恢复时已有命中成本)。
       const prevCr = new Map()
-      for (let k = 0; k < sessions.length; k++) {
-        const snap = snaps[k]
-        if (!snap) continue
-        const sid = sessions[k].header.id
-        for (const ev of snap.events) {
-          if (ev.type !== 'assistant/message') continue
-          const u = ev.data && ev.data.usage
-          if (!u) continue
-          const src = ev.data.message && ev.data.message.source
-          // 只统计 opencode-go provider 的流量(与官方计费口径一致);
-          // deepseek 直连等其它 provider 不属于 Go key,排除。
-          if (!src || src.provider !== GO_PROVIDER) continue
-          const crRaw = u.cacheReadTokens || 0
-          const prev = prevCr.get(sid)
-          const crDelta = prev == null ? crRaw : Math.max(0, crRaw - prev)
-          prevCr.set(sid, crRaw)
-          out.push({
-            id: sid,
-            title: titles.get(sid) || null,
-            model: (src && src.model) || 'unknown',
-            provider: (src && src.provider) || 'unknown',
-            time: ev.time || 0,
-            inputTokens: u.inputTokens || 0,
-            outputTokens: u.outputTokens || 0,
-            cacheReadTokens: crDelta,
-            cacheWriteTokens: u.cacheWriteTokens || 0,
-            reasoningTokens: u.reasoningTokens || 0,
-          })
+      const SCAN_CONCURRENCY = 6
+      let cursor = 0
+      async function worker() {
+        while (cursor < sessions.length) {
+          const idx = cursor++
+          const rec = sessions[idx]
+          const snap = await sq.readSession(rec.header.id).catch(() => null)
+          if (!snap) continue
+          const sid = rec.header.id
+          for (const ev of snap.events) {
+            if (ev.type !== 'assistant/message') continue
+            const u = ev.data && ev.data.usage
+            if (!u) continue
+            const src = ev.data.message && ev.data.message.source
+            // 只统计 opencode-go provider 的流量(与官方计费口径一致);
+            // deepseek 直连等其它 provider 不属于 Go key,排除。
+            if (!src || src.provider !== GO_PROVIDER) continue
+            const crRaw = u.cacheReadTokens || 0
+            const prev = prevCr.get(sid)
+            const crDelta = prev == null ? crRaw : Math.max(0, crRaw - prev)
+            prevCr.set(sid, crRaw)
+            out.push({
+              id: sid,
+              title: titles.get(sid) || null,
+              model: (src && src.model) || 'unknown',
+              provider: (src && src.provider) || 'unknown',
+              time: ev.time || 0,
+              inputTokens: u.inputTokens || 0,
+              outputTokens: u.outputTokens || 0,
+              cacheReadTokens: crDelta,
+              cacheWriteTokens: u.cacheWriteTokens || 0,
+              reasoningTokens: u.reasoningTokens || 0,
+            })
+          }
+          // snap 离开作用域即释放,GC 可回收
         }
       }
+      await Promise.all(Array.from({ length: Math.min(SCAN_CONCURRENCY, sessions.length) }, worker))
       return out
     }
 

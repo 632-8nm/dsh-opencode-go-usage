@@ -2,6 +2,16 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.13] - 2026-08-16
+
+### 修复(DSH 服务被 V8 堆 OOM 杀死——退出码 134)
+- **会话扫描改流式,峰值内存降约 75%**:`collectDshScan` 此前 24 并发 + 全量驻留——所有会话事件同时解压成 JS 对象(本机会话库 117MB 压缩,解压后瞬时峰值可达 GB 级),每 5 分钟一轮,曾两次把 DSH 服务 V8 堆撑爆到 4GB 上限(`FATAL ERROR: Ineffective mark-compacts`,`the dsh service exited unexpectedly (code 134)`)
+- 现在并发降到 **6** 且**逐会话提取即释放**(worker 流式),任何时刻最多 6 个会话驻留,峰值约为原来的 1/4,且每块处理完即可被 GC 回收;`lastScan` 5 分钟复用不变
+- 移除不再使用的 `mapLimit`
+
+### 测试
+- **测试完全隔离**:套件把 `USERPROFILE`/`HOME` 重定向到临时目录(此前把真实磁盘缓存移开再还原,且 `ocgoLog` 会把测试噪声写进真实 `~/.config` 诊断日志)——现在磁盘缓存/凭据/诊断日志全部落在临时 HOME,不再触碰真实用户文件
+
 ## [1.6.12] - 2026-08-16
 
 ### 修复(增量刷新残留缺口——增量不再"停摆"或丢数据)
