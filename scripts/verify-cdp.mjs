@@ -1,4 +1,4 @@
-// verify-cdp.mjs — 端到端验证 CDP 自动提取(不依赖配置中的 cookie)
+// verify-cdp.mjs — 可选 CDP 诊断工具(不参与主流程凭据获取)
 // 用法:先启动调试浏览器(scripts/start-browser-debug.bat,端口 9222),
 //       再运行:node scripts/verify-cdp.mjs [port]
 // 从 src/host.js 提取真实的 OFFICIAL_SCRIPT 函数,单独调用 cdp_fetch_cookie。

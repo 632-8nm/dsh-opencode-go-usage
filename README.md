@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-4d6bfe" alt="license: MIT" /></a>
-  <a href="https://github.com/Xenia0922/dsh-opencode-go-usage"><img src="https://img.shields.io/badge/version-v1.6.32-22c3a6" alt="最新版本" /></a>
+  <a href="https://github.com/Xenia0922/dsh-opencode-go-usage"><img src="https://img.shields.io/badge/version-v1.7.0-22c3a6" alt="最新版本" /></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2a3558" alt="平台：Windows、macOS、Linux" />
   <img src="https://img.shields.io/badge/runtime-DSH%20plugin-4d6bfe" alt="运行时：DSH 插件" />
   <img src="https://img.shields.io/badge/tests-27%20passing-22c3a6" alt="测试：27 通过" />
@@ -20,7 +20,7 @@
 
 ## 功能
 
-- 官方账户级用量：读取官网 `usage.list`，使用官方逐请求费用，支持跨设备数据。
+- 官方账户级用量：读取官网 `usage.list`，使用官方逐请求费用，支持跨设备数据。凭据通过本地配置提供。
 - DSH 会话分析：按 DSH 会话、模型和日期统计 OpenCode Go 用量。
 - 配额监控：显示滚动 5 小时、周、月配额、重置时间和消耗速度预测。
 - 多 key 配额池：自动发现 `.credentials.yaml` 中的 `OPENCODE_GO_KEY_*`，支持切换和限流状态提示。
@@ -45,7 +45,6 @@ Bundle 模式会随 DSH profile 启动，并通过本地 `webServer` 注册以�
 
 - `/ocgo-usage/fetch`：读取面板数据
 - `/ocgo-usage/config`：保存官方凭据
-- `/ocgo-usage/launch-browser`：启动独立调试浏览器
 - `/ocgo-usage/retry`：绕过缓存重新抓取
 
 如果插件目录路径包含空格，而 `dsh plugin add` 无法正确解析，请把仓库移动到无空格路径，或使用 junction/link 指向无空格目录。
@@ -63,18 +62,18 @@ DSH 重启后动态定义会消失；长期使用请使用 Bundle 模式。
 
 ## 首次配置
 
-安装完成后，右下角会出现 OpenCode Go FAB。打开官方视图，按以下顺序完成登录：
+安装完成后，右下角会出现 OpenCode Go FAB。官方视图采用一次性手动凭据配置：
 
-1. 点击“启动调试浏览器并登录”。
-2. 在新开的独立 Chromium 窗口中登录 `opencode.ai`。
-3. 关闭该窗口。
-4. 回到面板点击“重试提取”或刷新。
+1. 在普通浏览器中打开 `opencode.ai` 的 usage 页面。
+2. 打开开发者工具，在 Application/Storage → Cookies 中复制 `auth` Cookie。
+3. 从 usage 页面地址中复制 `workspaceId`（形如 `wrk_xxx`）。
+4. 将两项填入面板并点击“保存并刷新”。
 
-支持的浏览器包括 Edge、Chrome、Brave、Vivaldi、Opera、Arc 和 Chromium。Safari、Firefox 不支持本插件使用的 CDP 取 Cookie 方式。
+凭据保存后，后续刷新不需要再次登录，也不需要以调试模式启动浏览器。Safari、Firefox 也可以用于手动复制凭据。
 
-如果自动提取失败，也可以在官方视图中手动填写：
+手动填写：
 
-- `authCookie`：浏览器开发者工具中 `opencode.ai` 的 `auth` Cookie。
+- `authCookie`：浏览器开发者工具中 `opencode.ai` 的 `auth` Cookie 值。
 - `workspaceId`：usage 页面地址中的 `wrk_xxx`。
 
 配置保存在本机：
@@ -120,7 +119,7 @@ DSH 重启后动态定义会消失；长期使用请使用 Bundle 模式。
 ```text
 opencode.ai usage.list
         │
-        ├─ CDP 自动提取 auth Cookie
+        ├─ 本地配置中的 auth Cookie
         ├─ 官方逐请求 cost
         └─ 账户级统计、模型排行、趋势和配额对账参考
 ```
@@ -154,22 +153,11 @@ Key 的发现顺序：
 
 ## 故障排查
 
-### 官方视图显示 `NO_BROWSER`
+### 官方视图显示 `NEED_CONFIG`
 
-确认以下事项：
+这表示本机还没有官方凭据配置。请在普通浏览器中打开 `opencode.ai` 的 usage 页面，复制 `auth` Cookie 和地址栏中的 `workspaceId`，填入官方视图后点击“保存并刷新”。
 
-1. 使用的是 Chromium 系浏览器，而不是 Safari 或 Firefox。
-2. 调试浏览器窗口已经打开并完成登录。
-3. 关闭调试浏览器后点击“重试提取”。
-4. 如果浏览器启动较慢，等待约 20 秒后再刷新。
-
-也可以运行：
-
-```sh
-node scripts/verify-cdp.mjs
-```
-
-该命令会检查本机 `9222` 调试端口并尝试读取 Cookie。
+主流程不会自动探测或启动调试浏览器，因此不会受已有 Edge 进程合并和调试端口失效影响。
 
 ### 官方明细加载失败，但配额正常
 
@@ -224,9 +212,9 @@ src/client.js            FAB、React 面板和交互逻辑
 lib/index.js             构建后的 Host ESM 入口
 lib/client.js            构建后的浏览器注册 Bundle
 scripts/build-lib.mjs    构建与回归门禁
-scripts/verify-cdp.mjs   CDP 端到端验证
+scripts/verify-cdp.mjs   可选 CDP 诊断工具,不参与主流程
 scripts/start-browser-debug.bat
-tests/test.mjs           Node 内置测试套件
+tests/test.mjs           Node 内置测试套件（27 个用例）
 cordis.patch.yml         DSH Bundle 补丁层
 ```
 
@@ -235,10 +223,10 @@ cordis.patch.yml         DSH Bundle 补丁层
 ## 隐私与安全
 
 - API key 只在本机子进程中读取和使用，不写入诊断日志。
-- auth Cookie 只发送到 `opencode.ai`，会持久化到本机配置文件供后续复用。
+- auth Cookie 只发送到 `opencode.ai`，由用户手动复制并持久化到本机配置文件供后续复用。
 - 用量数据、配置和诊断日志不发送到第三方。
 - 更新检查只读取 GitHub 公共 `package.json`，不上传用户数据。
-- 调试浏览器使用独立 profile；调试端口开放期间，本机其他程序理论上可以访问该浏览器的调试接口，完成登录和提取后应关闭窗口。
+- 主流程不需要调试浏览器或开放 CDP 端口，减少已有浏览器进程和本地调试端口带来的风险。
 
 ## 许可证
 

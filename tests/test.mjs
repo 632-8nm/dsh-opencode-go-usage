@@ -52,7 +52,7 @@ test.after(() => {
 // ---------------------------------------------------------------------------
 // 工具:构造一次 apply 调用环境,可注入 fake services,并捕获 harness.handle
 // ---------------------------------------------------------------------------
-function makeHostEnv({ dynamic = true, sessions = [], officialResult = null, quotaResult = null, launchResult = null, webServerEnabled = true } = {}) {
+function makeHostEnv({ dynamic = true, sessions = [], officialResult = null, quotaResult = null, launchResult = null, webServerEnabled = true, subprocessEnabled = false } = {}) {
   const handlers = new Map()
   const fakeHarness = { handle: (method, fn) => { handlers.set(method, fn); return () => handlers.delete(method) } }
   // 动态模式模拟:dsh-cordis-host-runner 沙箱把 harness/btoa 作为全局。
@@ -65,7 +65,7 @@ function makeHostEnv({ dynamic = true, sessions = [], officialResult = null, quo
     resolve: (req) => ({ ...req }),
     run: async (spec) => {
       shellCalls.push(spec.command)
-      // 一键启动调试浏览器(pwsh -EncodedCommand)→ 默认成功(OK),可注入失败
+      // 官方抓取命令 mock:默认返回成功或可注入失败
       if (spec.command.includes('EncodedCommand')) {
         const lr = launchResult ?? 'OK'
         return { exitCode: lr === 'OK' ? 0 : 3, stdout: { text: lr }, stderr: { text: '' } }
@@ -92,6 +92,12 @@ function makeHostEnv({ dynamic = true, sessions = [], officialResult = null, quo
     },
   }
 
+  const subprocessCalls = []
+  const subprocess = {
+    resolve: shell.resolve,
+    run: async (spec) => { subprocessCalls.push(spec.command); return shell.run(spec) },
+  }
+
   const titleSnap = (id, title) => ({ sessionId: id, status: 'fulfilled', value: { title: { title } } })
   const sessionQuery = {
     listSessions: async () => sessions.map((s) => ({ header: { id: s.id }, live: true, persisted: true })),
@@ -108,10 +114,10 @@ function makeHostEnv({ dynamic = true, sessions = [], officialResult = null, quo
     register: (spec) => { if (spec && spec.path) routeHandlers.set(spec.path, spec.handler); return () => routeHandlers.delete(spec && spec.path) },
   }
   const ctx = {
-    get: (name) => (name === 'shell' ? shell : name === 'sessionQuery' ? sessionQuery : name === 'webServer' && webServerEnabled ? webServer : undefined),
+    get: (name) => (name === 'shell' ? shell : name === 'subprocess' && subprocessEnabled ? subprocess : name === 'sessionQuery' ? sessionQuery : name === 'webServer' && webServerEnabled ? webServer : undefined),
     effect: (fn) => { effects.push(fn); const d = fn(); return d },
   }
-  return { ctx, shellCalls, handlers, effects, fakeHarness, routeHandlers }
+  return { ctx, shellCalls, subprocessCalls, handlers, effects, fakeHarness, routeHandlers }
 }
 
 function mkUsage(overrides = {}) {
@@ -462,24 +468,6 @@ test('配额:yaml 单 key 与 auth.json CLI key 自动合并为多 key', async (
   assert.equal(sent[1].key, 'sk-cli-xxx')
 })
 
-test('一键启动调试浏览器:成功返回 ok,未监听返回明确错误(不再假报已弹出)', async () => {
-  // 成功路径
-  const okEnv = makeHostEnv({ dynamic: true, sessions: [] })
-  const m = await import(HOST_URL)
-  m.apply(okEnv.ctx)
-  const ok = await okEnv.handlers.get('ocgo-usage:launch-browser')(null)
-  assert.equal(ok.ok, true, '启动成功应返回 ok')
-  assert.ok(okEnv.shellCalls.some((c) => c.includes('EncodedCommand')), 'Windows 应走 pwsh -EncodedCommand')
-
-  // NO_LISTEN 路径:启动命令返回 NO_LISTEN → 明确错误,不再误报成功
-  const failEnv = makeHostEnv({ dynamic: true, sessions: [], launchResult: 'NO_LISTEN' })
-  const m2 = await import(HOST_URL)
-  m2.apply(failEnv.ctx)
-  const fail = await failEnv.handlers.get('ocgo-usage:launch-browser')(null)
-  assert.equal(fail.ok, false)
-  assert.ok(String(fail.error).includes('NO_LISTEN'), '应返回 NO_LISTEN 明确报错: ' + fail.error)
-})
-
 test('动态模式:配置保存走 host RPC,不依赖 webServer', async () => {
   const env = makeHostEnv({ dynamic: true, sessions: [], webServerEnabled: false })
   const m = await import(HOST_URL)
@@ -491,11 +479,24 @@ test('动态模式:配置保存走 host RPC,不依赖 webServer', async () => {
   assert.ok(existsSync(join(FAKE_HOME, '.config', 'dsh-opencode-go-usage.json')), '配置应落盘')
 })
 
-test('Windows 启动器先直启并验证,失败后才使用 Explorer 兜底', () => {
-  const src = readFileSync(join(root, 'src', 'host.js'), 'utf8')
-  const direct = src.indexOf('Start-Process -FilePath $edge')
-  const fallback = src.indexOf('explorer.exe $bat')
-  assert.ok(direct >= 0 && fallback >= 0 && direct < fallback, '启动器不应并行触发两个浏览器实例')
+test('subprocess 服务可优先承载官方命令', async () => {
+  const env = makeHostEnv({ dynamic: true, sessions: [], subprocessEnabled: true })
+  const m = await import(HOST_URL)
+  m.apply(env.ctx)
+  await env.handlers.get('ocgo-usage:fetch')(null)
+  assert.ok(env.subprocessCalls.length > 0, '存在 subprocess 服务时应优先调用它')
+})
+
+test('DSH 会话列表包含重复描述时只扫描一次', async () => {
+  const one = { id: 'duplicate-session', title: '重复会话', events: [mkAssistantEvent('deepseek-v4-flash', 'opencode-go', mkUsage({ inputTokens: 100 }))] }
+  const env = makeHostEnv({ dynamic: true, sessions: [one, one] })
+  const m = await import(HOST_URL)
+  m.apply(env.ctx)
+  const handle = env.handlers.get('ocgo-usage:fetch')
+  await handle(null)
+  await new Promise((r) => setTimeout(r, 20))
+  const data = await handle(null)
+  assert.equal(data.dsh.total.requests, 1, '重复 session descriptor 不应重复计费')
 })
 
 test('官方结果格式异常时拒绝进入统计视图', async () => {
@@ -598,7 +599,7 @@ test('保存凭据后立即重试(重置失败冷却,不再白等 60s)', async (
   let now = realNow()
   Date.now = () => now
   try {
-    const env = makeHostEnv({ dynamic: true, sessions: [], officialResult: { ok: false, error: 'NO_BROWSER' } })
+    const env = makeHostEnv({ dynamic: true, sessions: [], officialResult: { ok: false, error: 'NEED_CONFIG' } })
     const m = await import(HOST_URL)
     m.apply(env.ctx)
     const handle = env.handlers.get('ocgo-usage:fetch')
@@ -648,7 +649,7 @@ test('"重试提取"端点:绕过冷却与聚合缓存立即重抓', async () =>
   let now = realNow()
   Date.now = () => now
   try {
-    const env = makeHostEnv({ dynamic: true, sessions: [], officialResult: { ok: false, error: 'NO_BROWSER' } })
+    const env = makeHostEnv({ dynamic: true, sessions: [], officialResult: { ok: false, error: 'NEED_CONFIG' } })
     const m = await import(HOST_URL)
     m.apply(env.ctx)
     const handle = env.handlers.get('ocgo-usage:fetch')
@@ -781,21 +782,23 @@ test('host 源码包含官方 usage.list 抓取(配置/cookie/1e8 换算)', () =
   assert.ok(src.includes('utf-8-sig'), '配置文件应容忍 BOM')
   assert.ok(src.includes('usage.list') || src.includes('bfd684bfc2e4eed05cd0b518f5e4eafd3f3376e3938abb9e536e7c03df831e5c'), '应调用官方 usage.list server-fn')
   assert.ok(src.includes('costOfficial: (r.cost || 0) / 1e8'), '官方 cost 应按 1e-8 美元换算')
-  // 自动提取(仅调试端口 CDP 方案)
-  assert.ok(src.includes('cdp_fetch_cookie'), '应含调试端口 CDP 自动提取')
+  // CDP 仅保留为独立诊断工具,主流程要求手动配置凭据
+  assert.ok(src.includes('cdp_fetch_cookie'), '应保留独立 CDP 诊断能力')
   assert.ok(src.includes('ws_connect'), '应含最小 WebSocket 客户端')
-  assert.ok(src.includes('NO_BROWSER'), '调试浏览器缺失应有明确错误码')
+  assert.ok(src.includes('NEED_CONFIG'), '无凭据时应立即提示手动配置')
   assert.ok(src.includes('OCGO_LAST_TS'), '应支持增量刷新')
   assert.ok(src.includes('load_disk_cache'), '应含磁盘缓存')
-  assert.ok(src.includes("'/ocgo-usage/launch-browser'"), '应提供一键启动调试浏览器端点')
-  assert.ok(src.includes('launchDebugBrowser'), 'host 应能启动调试浏览器')
+  assert.ok(!src.includes("'/ocgo-usage/launch-browser'"), '主流程不应注册自动启动浏览器端点')
+  assert.ok(src.includes("ctx.get('subprocess')"), 'Host 应优先使用 subprocess 执行器')
+  assert.ok(!src.includes('launchDebugBrowser'), '主流程不应包含自动启动浏览器')
   assert.ok(src.includes("'/ocgo-usage/config'"), '应提供手动凭据保存端点')
   const lib = readFileSync(join(root, 'lib', 'index.js'), 'utf8')
   assert.ok(lib.includes('collectOfficial'), '产物应包含官方源聚合')
   assert.ok(lib.includes("node:fs"), 'bundle 产物应注入 node:fs')
   const client = readFileSync(join(root, 'lib', 'client.js'), 'utf8')
   assert.ok(client.includes("'view.official'"), '面板应含官方视图')
-  assert.ok(client.includes("'official.launch'"), '面板应含一键启动调试浏览器按钮')
+  assert.ok(client.includes("'official.errConfig'"), '面板应引导手动配置官方凭据')
+  assert.ok(!client.includes('launchBrowser'), '面板不应自动启动浏览器')
   assert.ok(client.includes('saveCfg'), '面板应含手动凭据保存')
   assert.ok(client.includes("'ocgo-usage:config'"), '动态模式应含配置 RPC')
   assert.ok(client.includes("cache: 'no-store'"), '客户端取数不应命中浏览器缓存')

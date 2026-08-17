@@ -1,5 +1,13 @@
 # 变更日志
 
+## [1.7.0] - 2026-08-17
+
+### 凭据流程与数据稳定性
+- 官方主流程改为手动填写 `authCookie` + `workspaceId`,不再自动探测 9222-9230 或从面板启动浏览器
+- Host 优先使用 `ctx.get('subprocess')`,无该服务时才回退 `shell`,减少受限 shell 导致的凭据写盘失败
+- DSH 会话扫描按真实 session id 去重,避免重复 session descriptor 造成会话和最近列表越积累越多
+- 新增无凭据快速失败提示和重复 session 回归测试,测试增至 27 个
+
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
 ## [1.6.32] - 2026-08-17
@@ -22,7 +30,7 @@
 - 修复 `truncated` 标记在落盘前赋值顺序错误,避免截断缓存被误判为完整
 - Windows Python 调用优先探测 `python` / `py`,旧硬编码路径仅作为最后回退
 - 主数据管道不再依赖开发者本机目录;CDP 验证脚本和独立 `.bat` 启动器也支持多浏览器/多 Python 环境
-- 新增官方 payload 异常、缓存原子写入、权限和 Python Launcher 回归门禁,测试增至 26 个
+- 新增官方 payload 异常、缓存原子写入、权限和 Python Launcher 回归门禁,测试增至 27 个
 
 ## [1.6.29] - 2026-08-17
 

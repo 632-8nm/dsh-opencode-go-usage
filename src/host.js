@@ -5,7 +5,7 @@
 //
 // 数据管道:
 //   1. DSH 会话事件  (assistant/message 携带真实 token usage + 模型/provider)
-//   2. 官方账户明细  (usage.list 逐请求 cost,通过 CDP/配置获取凭据)
+//   2. 官方账户明细  (usage.list 逐请求 cost,通过本地配置获取凭据)
 //   3. 官方配额接口  (opencode.ai/zen/go/v1/usage,curl + python 双通道)
 //
 // 安全:API key 只在 python/curl 子进程内读取,不进入命令日志;官方配置文件
@@ -13,11 +13,15 @@
 return {
   apply(ctx, config) {
     const shell = ctx.get('shell')
+    const subprocess = ctx.get('subprocess')
+    const runner = (subprocess && typeof subprocess.run === 'function') ? subprocess : shell
     const sq = ctx.get('sessionQuery')
-    if (shell === undefined || sq === undefined) return
+    if (runner === undefined || sq === undefined) return
+    const resolveCommand = (spec) => runner && typeof runner.resolve === 'function' ? runner.resolve(spec) : spec
+    const runCommand = (spec) => runner.run(spec)
 
     // 与 package.json version 同步(build-lib 回归门禁校验,防漂移)
-    const VERSION = '1.6.32'
+    const VERSION = '1.7.0'
 
     // --- 更新检查(轻量):启动后异步读 raw GitHub 的 package.json 比对版本,
     // 有新版本时面板提示"git pull 后重启"。不自动改代码;网络失败/受限环境
@@ -128,7 +132,8 @@ return {
     // V8 直接杀死)。并发降到 6 后峰值约为原来的 1/4,且每块处理完即被 GC。
     async function collectDshScan() {
       const out = []
-      const sessions = await sq.listSessions()
+      const listed = await sq.listSessions()
+      const sessions = Array.from(new Map(listed.filter((s) => s && s.header && s.header.id).map((s) => [s.header.id, s])).values())
       const titles = new Map()
       try {
         const idList = sessions.map((s) => s.header.id)
@@ -244,8 +249,8 @@ return {
     }
 
     // --- 官方账户级用量明细(usage.list server-fn) ---
-    // 凭据优先读配置 ~/.config/dsh-opencode-go-usage.json;缺失/过期时通过
-    // 调试端口 CDP 提取 auth cookie,再调用 workspaces API 解析 workspaceId。
+    // 官方主流程只读取本地配置 ~/.config/dsh-opencode-go-usage.json;不自动启动
+    // 浏览器或探测调试端口。CDP 函数仅供独立诊断工具使用。
     // 返回逐请求官方计费明细(cost 单位 1e-8 美元),账户级、跨设备,与官网账单一致。
     const OFFICIAL_SCRIPT = [
       'import json, os, re, time, urllib.request, urllib.parse, base64',
@@ -408,34 +413,9 @@ return {
       '        print(json.dumps(out))',
       '        raise SystemExit',
       'if not CK or not WID:',
-      '    try:',
-      '        CK = None',
-      '        src_browser = None',
-      '        # 1) 调试端口 CDP(浏览器自身解密,v20 也可用)——唯一自动提取通道',
-      '        for port in (9222, 9223, 9224, 9225, 9226, 9227, 9228, 9229, 9230):',
-      '            try:',
-      '                CK = cdp_fetch_cookie(port)',
-      '            except Exception:',
-      '                CK = None',
-      '            if CK:',
-      '                src_browser = "CDP:%d" % port',
-      '                break',
-      '        # 调试浏览器未启动/未登录 → 引导一键启动(面板按钮)',
-      '        if not CK: raise RuntimeError("NO_BROWSER")',
-      '        WID = fetch_workspace_id(CK)',
-      '        if not WID: raise RuntimeError("WS_PARSE_FAIL")',
-      '        try:',
-       '            os.makedirs(os.path.dirname(CFG), exist_ok=True)',
-       '            atomic_json_write(CFG, {"authCookie": CK, "workspaceId": WID}, private=True)',
-      '            out["autoExtracted"] = True',
-      '            out["browser"] = src_browser',
-      '        except Exception:',
-      '            pass',
-      '    except Exception as e:',
-      '        code = str(e)',
-      '        out["error"] = code if code in ("NO_BROWSER", "WS_PARSE_FAIL") else repr(e)[:200]',
-      '        print(json.dumps(out))',
-      '        raise SystemExit',
+      '    out["error"] = "NEED_CONFIG"',
+      '    print(json.dumps(out))',
+      '    raise SystemExit',
       'def fetch_text(page):',
       '    args = urllib.parse.quote(json.dumps([WID, page]))',
       '    url = "https://opencode.ai/_server?id=%s&args=%s" % (FID, args)',
@@ -700,7 +680,7 @@ return {
       if (keys.length) {
         const payload = utf8B64(JSON.stringify(keys))
         const pyCmd = buildPythonCmd(QUOTA_PY_PAYLOAD, [['OCGO_KEYS_JSON', payload]])
-        const c2 = await shell.run(shell.resolve({ command: pyCmd, timeoutMs: 30000 }))
+        const c2 = await runCommand(resolveCommand({ command: pyCmd, timeoutMs: 30000 }))
         if (c2.exitCode === 0) {
           const r = parsePy(stdoutText(c2.stdout))
           if (r.keys) return r
@@ -714,7 +694,7 @@ return {
       const curlCmd = (plat === 'darwin' || plat === 'linux')
         ? "PY=$(command -v python3 || command -v python || true); if [ -z \"$PY\" ]; then exit 1; fi; K=$(\"$PY\" -c 'import json,os;d=json.load(open(os.path.expanduser(\"~/.local/share/opencode/auth.json\")));print((d.get(\"opencode-go\") or {}).get(\"key\") or \"\")' 2>/dev/null); if [ -z \"$K\" ]; then exit 1; fi; curl -s -m 15 -H \"Authorization: Bearer $K\" https://opencode.ai/zen/go/v1/usage"
         : '$k=(Get-Content "$env:USERPROFILE\\.local\\share\\opencode\\auth.json" -Raw|ConvertFrom-Json).\'opencode-go\'.key; if(-not $k){Write-Error "no-key";exit 1}; curl.exe -s -m 15 -H "Authorization: Bearer $k" https://opencode.ai/zen/go/v1/usage'
-      const c1 = await shell.run(shell.resolve({ command: curlCmd, timeoutMs: 20000 }))
+      const c1 = await runCommand(resolveCommand({ command: curlCmd, timeoutMs: 20000 }))
       let c1err = null
       if (c1.exitCode === 0) {
         const r = parseCurl(stdoutText(c1.stdout))
@@ -723,7 +703,7 @@ return {
       }
       // 通道 2:python urllib 兜底(QUOTA_PY 本身跨平台,HOME 兼容)
       const pyCmd = buildPythonCmd(QUOTA_PY_PAYLOAD, null)
-      const c2 = await shell.run(shell.resolve({ command: pyCmd, timeoutMs: 20000 }))
+      const c2 = await runCommand(resolveCommand({ command: pyCmd, timeoutMs: 20000 }))
       if (c2.exitCode === 0) {
         const r = parsePy(stdoutText(c2.stdout))
         if (r.keys) return r
@@ -883,8 +863,8 @@ return {
     // 运行官方抓取 python(envs: [['KEY','VALUE'],...] 注入环境变量)
     async function runOfficial(envs) {
       const cmd = buildPythonCmd(OFFICIAL_PAYLOAD, envs)
-      const spec = shell.resolve({ command: cmd, timeoutMs: 240000, stdoutMaxBytes: 64 * 1024 * 1024 })
-      const result = await shell.run(spec)
+      const spec = resolveCommand({ command: cmd, timeoutMs: 240000, stdoutMaxBytes: 64 * 1024 * 1024 })
+      const result = await runCommand(spec)
       const stderrText = String(typeof result.stderr === 'string' ? result.stderr : (result.stderr && result.stderr.text != null ? result.stderr.text : '')).slice(0, 200)
       if (result.exitCode !== 0) throw new Error(stderrText || '子进程退出码 ' + result.exitCode)
       const raw = result.stdout
@@ -1062,12 +1042,12 @@ return {
             '    raise',
           ].join('\n')
           const cmd = buildPythonCmd(utf8B64(savePy), [['OCGO_CFG_JSON', utf8B64(JSON.stringify(data))]])
-          const result = await shell.run(shell.resolve({ command: cmd, timeoutMs: 20000 }))
+          const result = await runCommand(resolveCommand({ command: cmd, timeoutMs: 20000 }))
           if (result.exitCode !== 0) return { ok: false, error: '保存配置失败' }
         }
         officialCache = null // 清缓存,下次拉取使用新配置
         cache = null // 清 45s 聚合缓存:否则保存后 reload 仍命中旧缓存,白等一轮
-        // 用户主动更新凭据 = 明确想立即重试:重置失败冷却,否则此前 NO_BROWSER
+        // 用户主动更新凭据 = 明确想立即重试:重置失败冷却,否则此前 NEED_CONFIG
         // 等失败留下的 60s 冷却会让保存后白等一轮(实测保存→开始抓取隔 60s+)
         officialErrAt = 0
         return { ok: true }
@@ -1186,90 +1166,6 @@ return {
       }
     }
 
-    // 一键启动调试浏览器(独立 profile + 调试端口 9222,不影响日常浏览器):
-    // 用户登录一次后关闭窗口,插件即可通过 CDP 自动提取。不等待浏览器退出。
-    // 跨平台:Windows 走 powershell + explorer 中转;macOS 走 open -na(launchd
-    // 启动,进程独立于 DSH);Linux 走 nohup 后台。浏览器候选为 Chromium 系
-    // (CDP 协议;Safari/Firefox 调试协议不兼容,无法走本方案)。
-    async function launchDebugBrowser() {
-      try {
-        if (typeof shell === 'undefined' || !shell || typeof shell.resolve !== 'function') {
-          return { ok: false, error: 'shell 不可用' }
-        }
-        const plat = (typeof process !== 'undefined' && process.platform) || ''
-        // 端口验证轮询(sh 版,与 Windows 的 20s 窗口一致;curl 检测 CDP 端点)。
-        // macOS/Linux 此前"启动即 echo OK"——和 Windows 旧版一样会假成功,
-        // Edge/Chrome 冷启动 10-20s,必须等 9222 真正监听才算成功。
-        const POLL = 'for i in $(seq 1 26); do sleep 0.75; if curl -s -m 1 http://127.0.0.1:9222/json >/dev/null 2>&1; then echo OK; exit 0; fi; done; echo NO_LISTEN; exit 3'
-        let cmd = null
-        if (plat === 'darwin') {
-          // macOS:遍历常见 Chromium 系 .app(系统 + 用户目录),open -na 新实例传参
-          const apps = ['Google Chrome', 'Microsoft Edge', 'Brave Browser', 'Vivaldi', 'Opera', 'Arc', 'Chromium']
-          const chain = apps.map((a) =>
-            'open -na "' + a + '" --args --remote-debugging-port=9222 --user-data-dir="$HOME/.ocgo-browser-debug" https://opencode.ai 2>/dev/null'
-          ).join(' || ')
-          cmd = chain + ' || { echo NO_BROWSER; exit 2; }; ' + POLL
-        } else if (plat === 'linux') {
-          // Linux:nohup 后台脱离进程树;遍历常见 Chromium 系可执行文件
-          cmd = 'for B in google-chrome-stable google-chrome chromium chromium-browser microsoft-edge brave-browser vivaldi opera; do P=$(command -v $B 2>/dev/null) && { nohup "$P" --remote-debugging-port=9222 --user-data-dir="$HOME/.ocgo-browser-debug" https://opencode.ai >/dev/null 2>&1 & ' + POLL + '; }; done; echo NO_BROWSER; exit 2'
-        }
-        if (cmd) {
-          const spec = shell.resolve({ command: cmd, timeoutMs: 30000 })
-          const result = await shell.run(spec)
-          const text = String(typeof result.stdout === 'string' ? result.stdout : (result.stdout && result.stdout.text != null ? result.stdout.text : ''))
-          if (result.exitCode !== 0 || !/OK/.test(text)) {
-            // 与 Windows 分支一致:NO_LISTEN 明确报错,不假报成功
-            if (/NO_LISTEN/.test(text)) return { ok: false, error: 'NO_LISTEN: 浏览器启动较慢或失败——请稍等 20 秒后点刷新;仍未出现则再点一次启动按钮' }
-            return { ok: false, error: 'NO_BROWSER' }
-          }
-          return { ok: true }
-        }
-        // Windows(及动态沙箱无 process 信息时):EncodedCommand + explorer 中转。
-        // EncodedCommand 避免引号/括号被 shell 服务破坏;explorer 是用户桌面已有
-        // 进程,派生的浏览器不属于 DSH 的进程树,不会被 shell 服务在命令结束后
-        // 清理,窗口正常显示;且只用 core cmdlet,不受受限执行环境影响。
-        // 浏览器候选:Edge/Chrome/Brave/Vivaldi/Opera/Arc/Chromium 常见安装路径。
-        // 启动策略(2026-08-16 用户实测修复):
-        //   1. 9222 已监听 → 直接成功(用户可能已手动启动过)
-        //   2. explorer 中转 bat(历史方案;部分环境 explorer 不执行 .bat,
-        //      窗口不出现但命令仍返回成功——必须验证端口,不能假报"已弹出")
-        //   3. Start-Process 直接启动 Edge 兜底(不依赖 explorer;subprocess
-        //      服务只在插件 teardown 时清理进程树,命令结束后 Edge 存活)
-        //   4. 轮询验证 9222 监听(最多 ~20s),未监听返回 NO_LISTEN 明确报错。
-        //      窗口不能太短:Edge 冷启动 + 加载 profile 实测 10-20s,6s 内未
-        //      监听不代表失败(实测报 NO_LISTEN 后浏览器最终起来了)。
-        const ps = [
-          "$cands=@('C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe','C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',(Join-Path $env:LOCALAPPDATA 'Microsoft\\Edge\\Application\\msedge.exe'),'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe','C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',(Join-Path $env:LOCALAPPDATA 'Google\\Chrome\\Application\\chrome.exe'),'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe','C:\\Program Files\\Vivaldi\\Application\\vivaldi.exe','C:\\Program Files\\Opera\\launcher.exe',(Join-Path $env:LOCALAPPDATA 'Arc\\Application\\arc.exe'),(Join-Path $env:LOCALAPPDATA 'Chromium\\Application\\chrome.exe'))",
-          "$edge=$null; foreach($c in $cands){ if($c -and (Test-Path $c)){ $edge=$c; break } }",
-          "if(-not $edge){ Write-Output 'NO_BROWSER'; exit 2 }",
-          "if(Get-NetTCPConnection -LocalPort 9222 -State Listen -ErrorAction SilentlyContinue){ Write-Output 'OK'; exit 0 }",
-          "$bat=Join-Path $env:TEMP 'ocgo-launch.bat'",
-          "'@echo off' | Set-Content $bat -Encoding ASCII",
-          "'start \"\" \"' + $edge + '\" --remote-debugging-port=9222 \"--user-data-dir=%USERPROFILE%\\.ocgo-browser-debug\" https://opencode.ai' | Add-Content $bat -Encoding ASCII",
-           // Direct Start-Process is the primary path. Explorer is only a fallback
-           // after the first verification window, so the profile is not launched twice.
-           "Start-Process -FilePath $edge -ArgumentList '--remote-debugging-port=9222',(\"--user-data-dir=$env:USERPROFILE\\.ocgo-browser-debug\"),'https://opencode.ai' -WindowStyle Minimized",
-           "for($i=0;$i -lt 26;$i++){ Start-Sleep -Milliseconds 750; if(Get-NetTCPConnection -LocalPort 9222 -State Listen -ErrorAction SilentlyContinue){ Write-Output 'OK'; exit 0 } }",
-           "explorer.exe $bat",
-           "for($i=0;$i -lt 26;$i++){ Start-Sleep -Milliseconds 750; if(Get-NetTCPConnection -LocalPort 9222 -State Listen -ErrorAction SilentlyContinue){ Write-Output 'OK'; exit 0 } }",
-          "Write-Output 'NO_LISTEN'; exit 3",
-        ].join('\n')
-        const spec = shell.resolve({ command: 'powershell -NoProfile -NonInteractive -EncodedCommand ' + utf16leB64(ps), timeoutMs: 60000 })
-        const result = await shell.run(spec)
-        const text = String(typeof result.stdout === 'string' ? result.stdout : (result.stdout && result.stdout.text != null ? result.stdout.text : ''))
-        if (result.exitCode !== 0 || !/OK/.test(text)) {
-          const stderrText = String(typeof result.stderr === 'string' ? result.stderr : (result.stderr && result.stderr.text != null ? result.stderr.text : '')).slice(0, 150)
-          // 区分"浏览器没找到"与"启动了但 9222 未监听"。Edge 冷启动可能
-          // 10-20s(验证已加长到 ~20s);仍失败时引导稍等/重试,而非找 bat 文件
-          if (/NO_LISTEN/.test(text)) return { ok: false, error: 'NO_LISTEN: 浏览器启动较慢或失败——请稍等 20 秒后点刷新;仍未出现则再点一次启动按钮' }
-          return { ok: false, error: 'NO_BROWSER' + (stderrText ? ' (' + stderrText + ')' : '') }
-        }
-        return { ok: true }
-      } catch (e) {
-        return { ok: false, error: String((e && e.message) || e) }
-      }
-    }
-
     const serve = async () => {
       try {
         return await fetchAll()
@@ -1294,7 +1190,6 @@ return {
     const harnessApi = (typeof harness !== 'undefined' && harness) ? harness : null
     if (harnessApi && typeof harnessApi.handle === 'function') {
       ctx.effect(() => harnessApi.handle('ocgo-usage:fetch', serve))
-      ctx.effect(() => harnessApi.handle('ocgo-usage:launch-browser', launchDebugBrowser))
       ctx.effect(() => harnessApi.handle('ocgo-usage:retry', retryFetch))
       ctx.effect(() => harnessApi.handle('ocgo-usage:config', saveOfficialConfig))
     }
@@ -1334,22 +1229,6 @@ return {
               throw new Error('需要 authCookie 和 workspaceId')
             }
             const r = await saveOfficialConfig(cfg)
-            res.writeHead(r.ok ? 200 : 400, jsonHeaders)
-            res.end(JSON.stringify(r))
-          } catch (e) {
-            res.writeHead(400, jsonHeaders)
-            res.end(JSON.stringify({ ok: false, error: String((e && e.message) || e) }))
-          }
-        },
-      }))
-      // 一键启动调试浏览器:POST → 弹出独立调试窗口(登录用),不等待退出
-      ctx.effect(() => ws.register({
-        kind: 'exact',
-        path: '/ocgo-usage/launch-browser',
-        handler: async (req, res) => {
-          try {
-            if (req.method !== 'POST') { res.writeHead(405); res.end(); return }
-            const r = await launchDebugBrowser()
             res.writeHead(r.ok ? 200 : 400, jsonHeaders)
             res.end(JSON.stringify(r))
           } catch (e) {
