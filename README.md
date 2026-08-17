@@ -5,146 +5,245 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-4d6bfe" alt="license: MIT" /></a>
   <a href="https://github.com/Xenia0922/dsh-opencode-go-usage"><img src="https://img.shields.io/badge/version-v1.6.32-22c3a6" alt="最新版本" /></a>
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2a3558" alt="平台" />
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2a3558" alt="平台：Windows、macOS、Linux" />
   <img src="https://img.shields.io/badge/runtime-DSH%20plugin-4d6bfe" alt="运行时：DSH 插件" />
   <img src="https://img.shields.io/badge/tests-27%20passing-22c3a6" alt="测试：27 通过" />
 </p>
 
 # OpenCode Go 用量面板
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 插件——可拖拽缩放的悬浮仪表盘,实时展示 OpenCode Go 配额、逐请求用量与花费。
+一个用于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的 DSH 插件。它在桌面右下角提供可拖动、可缩放的悬浮面板，用于查看 OpenCode Go 的账户级用量、配额和 DSH 会话分析。
 
-> 由 Xenia0922 维护。数据完全本机获取,API key 不出本机、不进日志。
+数据在本机处理。网络请求只发往 `opencode.ai`，以及用于版本检查的 GitHub 公共 `package.json`；不会把 API key、Cookie 或用量数据发送给第三方。
 
-## 特性
+![界面预览](docs/screenshot.svg)
 
-- **悬浮 FAB**:右下角胶囊,可拖动,实时显示累计金额 + 滚动配额 %(≥70% 变黄、≥90% 变红);**面板开/关都 60s 自动刷新**;位置越界自动重置
-- **窗口控制**:拖标题栏移动、拖边缘/右下角缩放、双击/按钮最大化、位置/大小持久化
-- **官方账户级视图(主数据源)**:直接调官网 `usage.list`,逐请求官方计费(与官网账单一致、跨设备);凭据**自动提取**(调试端口 CDP,一键启动),零配置
-- **DSH 会话分析**:会话级视角,官方定价估算 + 与 `usage.list` 逐请求**精确回填**(实测匹配率 83%)
-- **配额环形图**:滚动(5h)/ 周 / 月配额 % + 重置倒计时;**多 key 池支持**(自动发现 `.credentials.yaml` 的 `OPENCODE_GO_KEY_*`,key 切换标签 ★ 当前生效,⚠ 已限流状态红色徽标);**明细不可用时也始终显示**;超速时红色提示预计耗尽时间
-- **按模型排行 / 花费趋势 / 最近会话**:花费降序条状图 + 费用分项展开、7/14/30 天柱状图、真实会话标题
-- **配额告警条**:任一窗口 ≥90% 面板顶部醒目提示
-- **中英切换 / CSV 导出**:面板标题栏一键切换(记忆选择,未选择时跟随 DSH 语言)、导出当前视图统计
+## 功能
 
-## 界面预览
+- 官方账户级用量：读取官网 `usage.list`，使用官方逐请求费用，支持跨设备数据。
+- DSH 会话分析：按 DSH 会话、模型和日期统计 OpenCode Go 用量。
+- 配额监控：显示滚动 5 小时、周、月配额、重置时间和消耗速度预测。
+- 多 key 配额池：自动发现 `.credentials.yaml` 中的 `OPENCODE_GO_KEY_*`，支持切换和限流状态提示。
+- 交互面板：FAB 拖动、标题栏拖动、边缘缩放、最大化、位置和大小持久化。
+- 数据分析：按模型排行、费用分项、7/14/30 天趋势、最近会话和 CSV 导出。
+- 中英文界面：可手动切换，也可以跟随 DSH 全局语言。
+- 跨平台启动：支持 Windows、macOS、Linux 上的 Chromium 系浏览器调试端口。
 
-<img src="docs/screenshot.svg" alt="OpenCode Go 用量面板界面预览" width="640">
+## 快速安装
 
-> 上图为按真实界面风格绘制的示意图(默认官方视图)。将实际截图保存为 `docs/screenshot.png` 即可替换预览(该文件已被 `.gitignore` 排除,不会入库)。
+### 推荐：Bundle 插件
 
-## 安装
-
-### 方式 A:会话内动态加载(快速体验,免构建)
-
-1. 打开 DSH 会话,让 Agent 执行 `cordis_define`(kind: new, idPrefix: `zenus`)
-2. 将 [`src/host.js`](src/host.js) 内容粘贴为 `code.host`,将 [`src/client.js`](src/client.js) 内容粘贴为 `code.client`
-3. `cordis_run` 授权后,右下角出现 FAB 胶囊
-
-> ⚠️ 动态定义只活在当前进程,**DSH 重启后丢失**;想长期使用请用方式 B。
-
-### 方式 B:Bundle 插件(推荐,随 DSH 启动自动加载)
+在插件仓库的**父目录**执行：
 
 ```sh
 git clone https://github.com/Xenia0922/dsh-opencode-go-usage.git
-
-# 从父目录安装进 profile 并启动
 dsh plugin --profile my-profile add ./dsh-opencode-go-usage
 dsh --profile my-profile
 ```
 
-- host 半区注册本地 HTTP 路由(`webServer` → `/ocgo-usage/fetch`),客户端同源 `fetch` 取数,随 DSH 启动自动注册
-- `dsh plugin add` 会执行 `pnpm add` 并写入 `dsh.profile.bundles`;构建产物由 `npm run build` 生成(host ESM + 浏览器注册形态 bundle)
-- 💡 插件目录路径含**空格**时 `dsh plugin add` 会解析失败(如 `D:\Opencode view\...`):先把目录放到无空格路径(如 junction 链接到 `C:\Users\<你>\dsh-plugin-src\...`)
+Bundle 模式会随 DSH profile 启动，并通过本地 `webServer` 注册以下路由：
 
-### 方式 C:把链接丢给 AI 装(最省事)
+- `/ocgo-usage/fetch`：读取面板数据
+- `/ocgo-usage/config`：保存官方凭据
+- `/ocgo-usage/launch-browser`：启动独立调试浏览器
+- `/ocgo-usage/retry`：绕过缓存重新抓取
 
-把下面这句话复制给任意 AI(DSH 会话里的),它自己会 clone、安装并告诉你重启:
+如果插件目录路径包含空格，而 `dsh plugin add` 无法正确解析，请把仓库移动到无空格路径，或使用 junction/link 指向无空格目录。
 
-> 帮我安装 https://github.com/Xenia0922/dsh-opencode-go-usage 这个 DSH 插件:按仓库 README 的方式 B 装进我的 DSH profile(数据目录以 DSH_HOME 环境变量为准),装完告诉我需要重启 DSH
+### 快速体验：动态加载
 
-## 使用
+动态加载不需要构建，但只在当前 DSH 进程有效：
+
+1. 在 DSH 会话中让 Agent 执行 `cordis_define`，`kind: new`，`idPrefix: zenus`。
+2. 将 [`src/host.js`](src/host.js) 内容填入 `code.host`。
+3. 将 [`src/client.js`](src/client.js) 内容填入 `code.client`。
+4. 执行 `cordis_run` 并授权。
+
+DSH 重启后动态定义会消失；长期使用请使用 Bundle 模式。
+
+## 首次配置
+
+安装完成后，右下角会出现 OpenCode Go FAB。打开官方视图，按以下顺序完成登录：
+
+1. 点击“启动调试浏览器并登录”。
+2. 在新开的独立 Chromium 窗口中登录 `opencode.ai`。
+3. 关闭该窗口。
+4. 回到面板点击“重试提取”或刷新。
+
+支持的浏览器包括 Edge、Chrome、Brave、Vivaldi、Opera、Arc 和 Chromium。Safari、Firefox 不支持本插件使用的 CDP 取 Cookie 方式。
+
+如果自动提取失败，也可以在官方视图中手动填写：
+
+- `authCookie`：浏览器开发者工具中 `opencode.ai` 的 `auth` Cookie。
+- `workspaceId`：usage 页面地址中的 `wrk_xxx`。
+
+配置保存在本机：
+
+```text
+~/.config/dsh-opencode-go-usage.json
+```
+
+插件会尝试将配置、缓存和诊断日志限制为当前用户可读写。
+
+## 面板说明
+
+| 区域 | 说明 |
+| --- | --- |
+| 官方视图 | 账户级官方明细，金额来自官方 `usage.list` |
+| DSH 视图 | 当前 DSH 会话的模型、金额、趋势和最近会话 |
+| 配额区 | 滚动、周、月配额及重置倒计时 |
+| 模型排行 | 按费用排序，点击模型行查看 token 和费用分项 |
+| 花费趋势 | 查看最近 7、14 或 30 天的每日费用 |
+| 最近会话 | 显示 DSH 会话标题、更新时间和官方回填金额 |
+
+常用操作：
 
 | 操作 | 效果 |
-|---|---|
-| 点击胶囊 | 打开面板(从胶囊位置展开) |
-| 拖动胶囊 / 拖标题栏 / 双击 | 移动 / 最大化还原 |
-| 拖右缘 / 底缘 / 右下角 | 调整宽度 / 高度 / 整体缩放 |
-| 视图切换 | **官方** / DSH |
-| 点击 🌐 / ⬇ / 刷新 | 中英切换(记忆选择)/ 导出 CSV / 手动刷新(或等 60s 自动) |
-| 点击模型行 | 展开费用分项(输入/输出/cache)与来源构成 |
+| --- | --- |
+| 点击 FAB | 打开或关闭面板 |
+| 拖动 FAB | 移动悬浮入口 |
+| 拖动标题栏 | 移动面板 |
+| 拖动右缘、底缘或右下角 | 调整面板大小 |
+| 双击标题栏 | 最大化或还原 |
+| 标题栏语言按钮 | 切换中文/英文 |
+| 标题栏下载按钮 | 导出当前视图 CSV |
+| 标题栏刷新按钮 | 手动刷新 |
 
-## 数据来源与口径
+面板和 FAB 的位置、大小会保存在浏览器 `localStorage` 中。
 
-```
-┌──────────────────────────────────────────────────────────┐
-│  官方用量明细   opencode.ai/_server usage.list            │
-│  (CDP 自动提取   逐请求官方计费(账户级,跨设备,与官网账单    │
-│   cookie,一键    一致)——面板主数据源                      │
-│   启动 / 手动粘贴)                                        │
-├──────────────────────────────────────────────────────────┤
-│  DSH 会话分析   sessionQuery 事件(仅 opencode-go)         │
-│  (估算 + 官方    cache 增量法估算;再与 usage.list 按       │
-│   回填)          模型+时间+token 匹配精确回填(匹配率 83%)  │
-├──────────────────────────────────────────────────────────┤
-│  官方配额接口   opencode.ai/zen/go/v1/usage              │
-│  (python 逐 key 滚动/周/月配额 % + 重置时间;多 key 池     │
-│   抓取,key 来自 自动发现 .credentials.yaml 的             │
-│   .credentials.yaml  OPENCODE_GO_KEY_*(回退 OPENCODE_GO_  │
-│   或 auth.json)     API_KEY / auth.json),不需要 cookie,   │
-│                明细不可用时也始终显示)                    │
-└──────────────────────────────────────────────────────────┘
+## 数据口径
+
+### 官方视图
+
+官方视图是主数据源：
+
+```text
+opencode.ai usage.list
+        │
+        ├─ CDP 自动提取 auth Cookie
+        ├─ 官方逐请求 cost
+        └─ 账户级统计、模型排行、趋势和配额对账参考
 ```
 
-- **多 key 配额池**:自动发现 `$DSH_HOME/.credentials.yaml` 的 `OPENCODE_GO_KEY_<name>` 条目(任意数量),`OPENCODE_GO_KEY_ACTIVE` 标记当前生效 key(面板配额区 ★ 标签);无池时回退 `OPENCODE_GO_API_KEY` 单 key;也可在插件行 `config.keyNames` 显式指定。每个 key 独立查询,**单个失败不影响其他**;单 key 场景保留 curl+python 双通道
+官方明细不会直接把可能过期的磁盘缓存显示给用户。磁盘缓存只作为增量抓取基准；首次全量抓取通常需要 15-60 秒，后续增量通常更快。点击“重试提取”会绕过内存、失败冷却和 Python 磁盘缓存，重新发起抓取。
 
-- **真实性优先**:官方视图**不秒开磁盘缓存旧数据**——磁盘缓存仅作增量基准,真实数据(增量 1-3s / 首次全量 **15-60s**,视网络与数据量)到位前显示"加载中";DSH 视图同理,扫描后台化完成前显示"扫描中"。手动保存凭据后立即重试(清缓存 + 重置失败冷却,不再白等)
-- **DSH 金额精度**:先用官方定价估算(cache 按会话增量 × 实测单价 $0.031/M),再与官方逐请求记录按(模型 + ±60s + token ±30%)匹配,匹配到的记录**直接用官方 cost**;未匹配的保持估算
-- **来源口径**:DSH 分析只统计 `source.provider == 'opencode-go'`;deepseek 直连等非 Go key 流量不计入;`*-free` 免费模型不计数
-- **对账(仅参考)**:foot 显示 `官方窗口 vs 本地明细`——配额接口按**用量单位**计(部分模型限时 2×),`×$60` 只是参考换算,与美元明细不是同一计量基准,不可直接对比
-- **抓取上限**:页数上限 5000(约 25 万条,可配置 `maxPages` 覆盖),超出或跳页时 foot 标注"数据截断";单页失败跳过,连续 5 页失败才判定数据尽头
-- **失败降级**:官方失败 60s 冷却自动重试(错误透传面板);增量/扫描失败写入诊断日志 `~/.config/dsh-opencode-go-usage.log`;配额与明细互不影响
+### DSH 视图
+
+DSH 视图只统计：
+
+```text
+source.provider == "opencode-go"
+```
+
+deepseek 直连等其他 provider 不计入。DSH 事件中的 cache token 是会话累计快照，插件会按相邻事件计算增量，避免重复累计。
+
+金额先按内置模型价格估算，再尝试与官方逐请求记录按模型、时间和 token 数匹配。匹配成功的记录使用官方费用，未匹配记录保留估算值。
+
+### 配额
+
+配额接口按用量单位计算，部分模型可能按 2 倍计量；官方配额百分比与美元明细不是同一口径。因此面板中的“官方窗口 vs 本地明细”只用于参考，不应当直接视为账单对账结果。
+
+Key 的发现顺序：
+
+1. `$DSH_HOME/.credentials.yaml` 中的 `OPENCODE_GO_KEY_<name>`。
+2. `OPENCODE_GO_KEY_ACTIVE` 指定当前 key。
+3. 无 key 池时回退 `OPENCODE_GO_API_KEY`。
+4. Bundle 模式会尝试合并 OpenCode CLI 的 `auth.json` key。
+
+每个 key 独立查询，单个 key 失败不会阻塞其他 key。
+
+## 故障排查
+
+### 官方视图显示 `NO_BROWSER`
+
+确认以下事项：
+
+1. 使用的是 Chromium 系浏览器，而不是 Safari 或 Firefox。
+2. 调试浏览器窗口已经打开并完成登录。
+3. 关闭调试浏览器后点击“重试提取”。
+4. 如果浏览器启动较慢，等待约 20 秒后再刷新。
+
+也可以运行：
+
+```sh
+node scripts/verify-cdp.mjs
+```
+
+该命令会检查本机 `9222` 调试端口并尝试读取 Cookie。
+
+### 官方明细加载失败，但配额正常
+
+这是可能的正常降级状态。配额接口使用 OpenCode CLI key，不依赖官方 Cookie；官方明细则需要 Cookie 和 workspace ID。先确认登录状态，再点击“重试提取”。
+
+### 重启后插件消失
+
+动态加载只存在于当前进程。请确认插件已经加入目标 profile：
+
+```sh
+dsh plugin --profile my-profile add ./dsh-opencode-go-usage
+dsh --profile my-profile
+```
+
+### 金额和官方配额百分比不一致
+
+这是计量单位不同导致的预期现象：
+
+- 本地明细是逐请求美元费用。
+- 官方配额是滚动、周、月用量单位。
+- 部分模型存在倍数计量。
+
+### 如何查看诊断日志
+
+```text
+~/.config/dsh-opencode-go-usage.log
+```
+
+日志只保留最近约 200 行。日志写入失败不会影响面板主流程。
 
 ## 开发
 
+要求：
+
+- Node.js
+- DSH/Cordis 运行环境
+- Python 3（官方抓取和配额兜底通道使用）
+
+常用命令：
+
 ```sh
-npm run build      # 构建 lib 产物 + 回归门禁(注册形态 / harness 守卫断言)
-npm test           # 27 个用例(node --test,零依赖;测试 HOME 完全隔离)
-npm run typecheck  # src 语法校验
+npm run build      # 生成 lib/并执行构建门禁
+npm test           # 运行 27 个 Node 测试
+npm run typecheck  # 检查 src/host.js 和 src/client.js 语法
 ```
 
+目录说明：
+
+```text
+src/host.js              Host 数据聚合、缓存、官方抓取和路由
+src/client.js            FAB、React 面板和交互逻辑
+lib/index.js             构建后的 Host ESM 入口
+lib/client.js            构建后的浏览器注册 Bundle
+scripts/build-lib.mjs    构建与回归门禁
+scripts/verify-cdp.mjs   CDP 端到端验证
+scripts/start-browser-debug.bat
+tests/test.mjs           Node 内置测试套件
+cordis.patch.yml         DSH Bundle 补丁层
 ```
-src/host.js    # Host 半区:聚合、缓存、python 数据管道(usage.list/CDP 自动提取/增量)
-src/client.js  # Client 半区:shell.overlay FAB + React 仪表盘(可拖拽缩放)
-lib/           # 构建产物(勿手改):host ESM 入口 + 浏览器注册形态 bundle
-scripts/       # build-lib.mjs(构建+回归门禁)、verify-cdp.mjs(CDP 端到端验证)
-tests/         # 27 个用例:聚合、口径过滤、静态降级、bundle 注册、i18n、官方源、失败冷却、增量路径
-cordis.patch.yml  # bundle 补丁层(插入插件行,inject webServer)
-```
 
-## 常见问题
+`lib/` 是构建产物，不要直接手工修改；修改 `src/` 后运行 `npm run build`。
 
-**重启后插件不见了?**
-动态方式(方式 A)是进程内定义,重启即失(设计如此)。要随 DSH 自动加载请用方式 B:在 profile 目录执行 `pnpm add link:<插件目录>`,并把包名追加进 profile `package.json` 的 `dsh.profile.bundles`,然后重启 DSH。
+## 隐私与安全
 
-**官方视图怎么配置?** 全自动,只需手动做一次登录:点"🚀 一键启动调试浏览器并登录"→ 在弹出的独立窗口登录 opencode.ai → 关闭窗口 → 刷新面板。插件通过调试端口 CDP 由浏览器自身解密并提取 `auth` cookie(支持任何加密版本,无需关闭日常浏览器),之后长期复用;cookie 失效时面板自动提示,也可手动粘贴 `authCookie` + `workspaceId`。
-
-**为什么"累计"和官方配额百分比对不上?**
-本地"累计"是全部历史记录的美元明细;官方百分比是 5 小时/周/月的**用量单位**窗口(部分模型限时 2×)。金额对比请用面板"本月" vs 官方窗口换算,且两者计量基准不同,仅作参考。
-
-**codex 流量算不算 Go 用量?**
-算。codex 的 `config.toml` 指向 `opencode.ai/zen/go/v1`(同一 Go key),其用量已在官网 `usage.list` 中按请求计费,官方视图与配额百分比天然包含。
-
-## 隐私
-
-- API key **只在本机**由子进程从 `~/.local/share/opencode/auth.json` 读取
-- 官方凭据(auth cookie)仅本机提取使用,会持久化到本机配置文件以便后续复用,不进日志、不向第三方发送
-- 网络请求发往官网(opencode.ai);更新检查会额外读取 GitHub 上的公开 package.json,不上传用户数据
+- API key 只在本机子进程中读取和使用，不写入诊断日志。
+- auth Cookie 只发送到 `opencode.ai`，会持久化到本机配置文件供后续复用。
+- 用量数据、配置和诊断日志不发送到第三方。
+- 更新检查只读取 GitHub 公共 `package.json`，不上传用户数据。
+- 调试浏览器使用独立 profile；调试端口开放期间，本机其他程序理论上可以访问该浏览器的调试接口，完成登录和提取后应关闭窗口。
 
 ## 许可证
 
-[MIT](LICENSE)——版权归 Xenia0922。
+[MIT](LICENSE)
 
 ## 变更日志
 
-见 [CHANGELOG.md](CHANGELOG.md)。
+完整历史见 [CHANGELOG.md](CHANGELOG.md)。
