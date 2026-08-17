@@ -593,6 +593,38 @@ test('保存凭据后立即重试(重置失败冷却,不再白等 60s)', async (
   }
 })
 
+test('"重试提取"端点:绕过冷却与聚合缓存立即重抓', async () => {
+  const realNow = Date.now
+  let now = realNow()
+  Date.now = () => now
+  try {
+    const env = makeHostEnv({ dynamic: true, sessions: [], officialResult: { ok: false, error: 'NO_BROWSER' } })
+    const m = await import(HOST_URL)
+    m.apply(env.ctx)
+    const handle = env.handlers.get('ocgo-usage:fetch')
+    const officialRuns = () => env.shellCalls.filter((c) => c.includes('base64') && !c.includes('zen/go/v1/usage') && !c.includes('EncodedCommand') && !c.includes('OCGO_KEYS_JSON')).length
+
+    // 首次失败 → 冷却 + 聚合缓存
+    await handle(null)
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(officialRuns(), 1)
+
+    // 30s 后(冷却内):调用 retry 端点 → 立即重抓(绕过冷却)
+    now += 30_000
+    const retryHandler = env.routeHandlers.get('/ocgo-usage/retry')
+    assert.ok(retryHandler, '应注册 /ocgo-usage/retry 端点')
+    let code = null
+    const res = { writeHead: (c) => { code = c }, end: () => {} }
+    const req = { method: 'POST', [Symbol.asyncIterator]: async function * () {} }
+    await retryHandler(req, res)
+    assert.equal(code, 200, 'retry 应成功')
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(officialRuns(), 2, 'retry 应立即重抓,不受冷却约束')
+  } finally {
+    Date.now = realNow
+  }
+})
+
 // ---------------------------------------------------------------------------
 // 3. 静态模式:无 harness 时干净退出
 // ---------------------------------------------------------------------------

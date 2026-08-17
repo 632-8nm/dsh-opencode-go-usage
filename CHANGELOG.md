@@ -2,6 +2,16 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.27] - 2026-08-17
+
+### 功能(抓不到就"再抓一次"按钮 + 无 Edge 用户兜底)
+- **"🔄 重试提取"按钮**:官方视图错误区新增——清缓存 + 重置失败冷却 + 立即重新 CDP 提取/抓取(新端点 `/ocgo-usage/retry`,动态模式 harness 桥同步注册),绕过 60s 冷却与 45s 聚合缓存;登录调试浏览器后点它即重新提取,无需等轮询
+- **一键启动 = start-browser-debug.bat 的按钮化**(已有按钮,能力等价):本次补上**用户级安装路径**(`%LOCALAPPDATA%` 的 Edge/Chrome),加上原有的系统级路径,无 Edge 时自动尝试 Chrome/Brave/Vivaldi/Opera/Arc/Chromium——**任一 Chromium 系浏览器装其一即可**,错误文案已明确说明
+- 错误提示不再让人找 bat 文件
+
+### 测试
+- 新增用例:retry 端点绕过冷却与聚合缓存立即重抓;套件 22 → 23
+
 ## [1.6.26] - 2026-08-17
 
 ### 修复(一键启动仍报 NO_LISTEN 的根因——验证窗口太短)
