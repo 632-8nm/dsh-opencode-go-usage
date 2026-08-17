@@ -3,7 +3,7 @@
 // 用 Node 内置 test runner 直接执行真实的构建产物(lib/index.js、lib/client.js),
 // 覆盖:
 //   1. lib/index.js 的 host ESM 导出契约
-//   2. 动态模式:harness.handle 注册 + 全量聚合(DSH 会话 + opencode + codex + 配额)
+//   2. 动态模式:harness.handle 注册 + 全量聚合(DSH 会话 + 官方明细 + 配额)
 //   3. 静态模式:无 harness 时 apply 干净退出、不注册 handler、不抛错
 //   4. lib/client.js 的浏览器注册形态(经典 script 语义 + 工厂 require(react))
 //   5. 聚合逻辑的边界(空数据、time=0、免费模型、价格前缀归一)
@@ -52,7 +52,7 @@ test.after(() => {
 // ---------------------------------------------------------------------------
 // 工具:构造一次 apply 调用环境,可注入 fake services,并捕获 harness.handle
 // ---------------------------------------------------------------------------
-function makeHostEnv({ dynamic = true, sessions = [], officialResult = null, quotaResult = null, launchResult = null } = {}) {
+function makeHostEnv({ dynamic = true, sessions = [], officialResult = null, quotaResult = null, launchResult = null, webServerEnabled = true } = {}) {
   const handlers = new Map()
   const fakeHarness = { handle: (method, fn) => { handlers.set(method, fn); return () => handlers.delete(method) } }
   // 动态模式模拟:dsh-cordis-host-runner 沙箱把 harness/btoa 作为全局。
@@ -82,6 +82,10 @@ function makeHostEnv({ dynamic = true, sessions = [], officialResult = null, quo
       if (spec.command.includes('zen/go/v1/usage')) {
         return { exitCode: 0, stdout: { text: JSON.stringify({ usage: { rolling: { percent: 30, status: 'ok', resetsAt: 1787000000000 }, weekly: { percent: 12, status: 'ok', resetsAt: 1787000000000 } } }) }, stderr: { text: '' } }
       }
+      // 动态配置保存命令(mock):只验证命令成功,不执行真实写盘
+      if (spec.command.includes('OCGO_CFG_JSON')) {
+        return { exitCode: 0, stdout: { text: '' }, stderr: { text: '' } }
+      }
       // 官方 usage.list(mock,避免测试联网):默认空记录,可注入失败结果
       const payload = officialResult ?? { ok: true, records: [], truncated: false }
       return { exitCode: 0, stdout: { text: JSON.stringify(payload) }, stderr: { text: '' } }
@@ -104,7 +108,7 @@ function makeHostEnv({ dynamic = true, sessions = [], officialResult = null, quo
     register: (spec) => { if (spec && spec.path) routeHandlers.set(spec.path, spec.handler); return () => routeHandlers.delete(spec && spec.path) },
   }
   const ctx = {
-    get: (name) => (name === 'shell' ? shell : name === 'sessionQuery' ? sessionQuery : name === 'webServer' ? webServer : undefined),
+    get: (name) => (name === 'shell' ? shell : name === 'sessionQuery' ? sessionQuery : name === 'webServer' && webServerEnabled ? webServer : undefined),
     effect: (fn) => { effects.push(fn); const d = fn(); return d },
   }
   return { ctx, shellCalls, handlers, effects, fakeHarness, routeHandlers }
@@ -127,7 +131,7 @@ test('lib/index.js 导出 host ESM 契约(name/apply)', async () => {
 })
 
 // ---------------------------------------------------------------------------
-// 2. 动态模式:注册 + 全量聚合 DSL 会话已含,opencode/codex 注入
+// 2. 动态模式:注册 + 全量聚合 DSH 会话与官方/配额结果
 // ---------------------------------------------------------------------------
 test('动态模式:注册 ocgo-usage:fetch 并正确聚合多数据源', async () => {
   const sessions = [
@@ -150,7 +154,7 @@ test('动态模式:注册 ocgo-usage:fetch 并正确聚合多数据源', async (
   assert.equal(settled, data, '45s 缓存内应返回同一对象')
   assert.equal(settled.dshLoading, false, '后台扫描完成后 dshLoading 应清除')
 
-  // DSH 会话分析:两笔 opencode-go(本地三源已移除,不再注入 opencode/codex)
+  // DSH 会话分析:两笔 opencode-go
   assert.equal(settled.dsh.total.requests, 2)
   assert.equal(settled.dsh.today.requests, 2)
   assert.ok(typeof settled.dsh.total.cost_est === 'number')
@@ -476,6 +480,39 @@ test('一键启动调试浏览器:成功返回 ok,未监听返回明确错误(�
   assert.ok(String(fail.error).includes('NO_LISTEN'), '应返回 NO_LISTEN 明确报错: ' + fail.error)
 })
 
+test('动态模式:配置保存走 host RPC,不依赖 webServer', async () => {
+  const env = makeHostEnv({ dynamic: true, sessions: [], webServerEnabled: false })
+  const m = await import(HOST_URL)
+  m.apply(env.ctx)
+  const handler = env.handlers.get('ocgo-usage:config')
+  assert.ok(handler, '动态模式应注册配置 RPC')
+  const result = await handler({ authCookie: 'Fe26.2-fake', workspaceId: 'wrk_fake' })
+  assert.equal(result.ok, true)
+  assert.ok(existsSync(join(FAKE_HOME, '.config', 'dsh-opencode-go-usage.json')), '配置应落盘')
+})
+
+test('Windows 启动器先直启并验证,失败后才使用 Explorer 兜底', () => {
+  const src = readFileSync(join(root, 'src', 'host.js'), 'utf8')
+  const direct = src.indexOf('Start-Process -FilePath $edge')
+  const fallback = src.indexOf('explorer.exe $bat')
+  assert.ok(direct >= 0 && fallback >= 0 && direct < fallback, '启动器不应并行触发两个浏览器实例')
+})
+
+test('官方结果格式异常时拒绝进入统计视图', async () => {
+  const env = makeHostEnv({
+    dynamic: true,
+    sessions: [],
+    officialResult: { ok: true, records: [{ ts: '2026-08-17T00:00:00.000Z', model: '', cost: 'bad' }] },
+  })
+  const m = await import(HOST_URL)
+  m.apply(env.ctx)
+  const retry = env.handlers.get('ocgo-usage:retry')
+  const result = await retry(null)
+  assert.equal(result.ok, true, '重试请求本身应完成')
+  assert.equal(result.official.ok, false, '非法官方 payload 不应进入统计')
+  assert.equal(result.official.error, '官方数据格式异常')
+})
+
 test('官方视图"最近会话":id 唯一且为真实会话 id(React key 防重复渲染)', async () => {
   const realNow = Date.now
   let now = realNow()
@@ -593,6 +630,19 @@ test('保存凭据后立即重试(重置失败冷却,不再白等 60s)', async (
   }
 })
 
+test('配置端点拒绝过大请求体', async () => {
+  const env = makeHostEnv({ dynamic: true, sessions: [] })
+  const m = await import(HOST_URL)
+  m.apply(env.ctx)
+  const cfgHandler = env.routeHandlers.get('/ocgo-usage/config')
+  let code = null
+  const res = { writeHead: (c) => { code = c }, end: () => {} }
+  const body = JSON.stringify({ authCookie: 'x'.repeat(40_000), workspaceId: 'wrk_fake' })
+  const req = { method: 'POST', [Symbol.asyncIterator]: async function * () { yield body } }
+  await cfgHandler(req, res)
+  assert.equal(code, 400)
+})
+
 test('"重试提取"端点:绕过冷却与聚合缓存立即重抓', async () => {
   const realNow = Date.now
   let now = realNow()
@@ -620,6 +670,7 @@ test('"重试提取"端点:绕过冷却与聚合缓存立即重抓', async () =>
     assert.equal(code, 200, 'retry 应成功')
     await new Promise((r) => setTimeout(r, 10))
     assert.equal(officialRuns(), 2, 'retry 应立即重抓,不受冷却约束')
+    assert.ok(env.shellCalls.some((c) => c.includes('OCGO_FORCE')), 'retry 应绕过 Python 磁盘缓存')
   } finally {
     Date.now = realNow
   }
@@ -746,4 +797,12 @@ test('host 源码包含官方 usage.list 抓取(配置/cookie/1e8 换算)', () =
   assert.ok(client.includes("'view.official'"), '面板应含官方视图')
   assert.ok(client.includes("'official.launch'"), '面板应含一键启动调试浏览器按钮')
   assert.ok(client.includes('saveCfg'), '面板应含手动凭据保存')
+  assert.ok(client.includes("'ocgo-usage:config'"), '动态模式应含配置 RPC')
+  assert.ok(client.includes("cache: 'no-store'"), '客户端取数不应命中浏览器缓存')
+  assert.ok(src.includes("'Cache-Control': 'no-store'"), 'Host 数据接口应禁止缓存')
+  assert.ok(src.includes('atomic_json_write'), '官方缓存/自动提取配置应使用原子写入')
+  assert.ok(src.includes('os.replace'), 'Python 写入器应使用原子替换')
+  assert.ok(src.includes('officialRecordValid'), 'Host 应校验官方记录结构')
+  assert.ok(src.includes('chmod'), '本地敏感文件应尝试收紧权限')
+  assert.ok(src.includes('Get-Command py'), 'Windows 应支持 Python Launcher 探测')
 })

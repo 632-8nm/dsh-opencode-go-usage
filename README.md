@@ -4,10 +4,10 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-4d6bfe" alt="license: MIT" /></a>
-  <a href="https://github.com/Xenia0922/dsh-opencode-go-usage"><img src="https://img.shields.io/badge/version-v1.6.18-22c3a6" alt="最新版本" /></a>
+  <a href="https://github.com/Xenia0922/dsh-opencode-go-usage"><img src="https://img.shields.io/badge/version-v1.6.32-22c3a6" alt="最新版本" /></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2a3558" alt="平台" />
   <img src="https://img.shields.io/badge/runtime-DSH%20plugin-4d6bfe" alt="运行时：DSH 插件" />
-  <img src="https://img.shields.io/badge/tests-15%20passing-22c3a6" alt="测试：15 通过" />
+  <img src="https://img.shields.io/badge/tests-27%20passing-22c3a6" alt="测试：27 通过" />
 </p>
 
 # OpenCode Go 用量面板
@@ -47,7 +47,6 @@
 
 ```sh
 git clone https://github.com/Xenia0922/dsh-opencode-go-usage.git
-cd dsh-opencode-go-usage
 
 # 从父目录安装进 profile 并启动
 dsh plugin --profile my-profile add ./dsh-opencode-go-usage
@@ -110,7 +109,7 @@ dsh --profile my-profile
 
 ```sh
 npm run build      # 构建 lib 产物 + 回归门禁(注册形态 / harness 守卫断言)
-npm test           # 15 个用例(node --test,零依赖;测试 HOME 完全隔离)
+npm test           # 27 个用例(node --test,零依赖;测试 HOME 完全隔离)
 npm run typecheck  # src 语法校验
 ```
 
@@ -119,7 +118,7 @@ src/host.js    # Host 半区:聚合、缓存、python 数据管道(usage.list/CD
 src/client.js  # Client 半区:shell.overlay FAB + React 仪表盘(可拖拽缩放)
 lib/           # 构建产物(勿手改):host ESM 入口 + 浏览器注册形态 bundle
 scripts/       # build-lib.mjs(构建+回归门禁)、verify-cdp.mjs(CDP 端到端验证)
-tests/         # 15 个用例:聚合、口径过滤、静态降级、bundle 注册、i18n、官方源、失败冷却、增量路径
+tests/         # 27 个用例:聚合、口径过滤、静态降级、bundle 注册、i18n、官方源、失败冷却、增量路径
 cordis.patch.yml  # bundle 补丁层(插入插件行,inject webServer)
 ```
 
@@ -139,8 +138,8 @@ cordis.patch.yml  # bundle 补丁层(插入插件行,inject webServer)
 ## 隐私
 
 - API key **只在本机**由子进程从 `~/.local/share/opencode/auth.json` 读取
-- 官方凭据(auth cookie)仅本机提取使用(调试端口 CDP),不进日志、不落盘外传
-- 网络请求只发往官网(opencode.ai),不向任何第三方发送数据
+- 官方凭据(auth cookie)仅本机提取使用,会持久化到本机配置文件以便后续复用,不进日志、不向第三方发送
+- 网络请求发往官网(opencode.ai);更新检查会额外读取 GitHub 上的公开 package.json,不上传用户数据
 
 ## 许可证
 

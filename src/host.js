@@ -5,12 +5,11 @@
 //
 // 数据管道:
 //   1. DSH 会话事件  (assistant/message 携带真实 token usage + 模型/provider)
-//   2. opencode 官方库 (part 表 step-finish 逐请求记录,含官方 cost)
-//   3. codex 代理日志 (cc-switch proxy_request_logs,Go key 流量)
-//   4. 官方配额接口 (opencode.ai/zen/go/v1/usage,curl + python 双通道)
+//   2. 官方账户明细  (usage.list 逐请求 cost,通过 CDP/配置获取凭据)
+//   3. 官方配额接口  (opencode.ai/zen/go/v1/usage,curl + python 双通道)
 //
-// 安全:API key 只在 python/curl 子进程内从 auth.json 读取,不进命令日志、不落盘。
-// 弹性:数据源缺失自动降级(OPENCODE_DATA 优先,各源独立可用性检测)。
+// 安全:API key 只在 python/curl 子进程内读取,不进入命令日志;官方配置文件
+// 仅保存在本机,写入后尽量收紧文件权限。
 return {
   apply(ctx, config) {
     const shell = ctx.get('shell')
@@ -18,7 +17,7 @@ return {
     if (shell === undefined || sq === undefined) return
 
     // 与 package.json version 同步(build-lib 回归门禁校验,防漂移)
-    const VERSION = '1.6.28'
+    const VERSION = '1.6.32'
 
     // --- 更新检查(轻量):启动后异步读 raw GitHub 的 package.json 比对版本,
     // 有新版本时面板提示"git pull 后重启"。不自动改代码;网络失败/受限环境
@@ -58,8 +57,8 @@ return {
 
     const PRICING = {
       // 官方定价(opencode.ai/docs/go,per 1M tokens;deepseek-v4-flash 限时 2× 用量)。
-      // 实测校准:deepseek-v4-flash 的 cache 读实际单价 ≈ $0.031/M(由 opencode.db
-      // 官方 cost 反推,官网表格的 0.0028 与实测差 11 倍,以实测为准)。
+      // 实测校准:deepseek-v4-flash 的 cache 读实际单价 ≈ $0.031/M(由官方
+      // cost 反推,官网表格的 0.0028 与实测差 11 倍,以实测为准)。
       "deepseek-v4-flash": { in: 0.14, out: 0.28, cr: 0.031, cw: 0.0 },
       "deepseek-v4-pro": { in: 0.435, out: 0.87, cr: 0.003625, cw: 0.0 },
       "gpt-5.6-luna": { in: 0.2, out: 1.2, cr: 0.02, cw: 0.25 },
@@ -245,33 +244,48 @@ return {
     }
 
     // --- 官方账户级用量明细(usage.list server-fn) ---
-    // 凭据优先读配置 ~/.config/dsh-opencode-go-usage.json;缺失/过期时自动从
-    // Edge cookie 库提取(auth cookie → workspaces API 解析 workspaceId),Edge
-    // 运行时数据库被锁则返回 EDGE_RUNNING,由面板引导手动粘贴或关闭 Edge。
+    // 凭据优先读配置 ~/.config/dsh-opencode-go-usage.json;缺失/过期时通过
+    // 调试端口 CDP 提取 auth cookie,再调用 workspaces API 解析 workspaceId。
     // 返回逐请求官方计费明细(cost 单位 1e-8 美元),账户级、跨设备,与官网账单一致。
     const OFFICIAL_SCRIPT = [
       'import json, os, re, time, urllib.request, urllib.parse, base64',
-      'HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or r"C:\\Users\\Xenia"',
+      'HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or os.path.expanduser("~")',
       'CFG = os.path.join(HOME, ".config", "dsh-opencode-go-usage.json")',
       'FID = "bfd684bfc2e4eed05cd0b518f5e4eafd3f3376e3938abb9e536e7c03df831e5c"',
       'WSFID = "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f"',
       'PAGE_SIZE = 50',
       'UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/143.0.0.0 Safari/537.36"',
-      'out = {"ok": False, "error": None, "records": [], "truncated": False, "skippedPages": 0, "autoExtracted": False, "browser": None}',
+      'out = {"ok": False, "error": None, "records": [], "truncated": False, "skippedPages": 0, "autoExtracted": False, "browser": None, "schema": 1}',
       'DISK = os.path.join(HOME, ".config", "dsh-opencode-go-usage-official.json")',
+      'def valid_record(r):',
+      '    return isinstance(r, dict) and isinstance(r.get("ts"), str) and bool(r.get("ts")) and isinstance(r.get("model"), str) and bool(r.get("model")) and isinstance(r.get("cost"), int) and r.get("cost") >= 0',
+      'def atomic_json_write(path, data, private=False):',
+      '    tmp = path + ".tmp-" + str(os.getpid())',
+      '    try:',
+      '        with open(tmp, "w", encoding="utf-8") as f:',
+      '            json.dump(data, f, ensure_ascii=False)',
+      '            f.flush()',
+      '            os.fsync(f.fileno())',
+      '        if private:',
+      '            try: os.chmod(tmp, 0o600)',
+      '            except Exception: pass',
+      '        os.replace(tmp, path)',
+      '    except Exception:',
+      '        try: os.unlink(tmp)',
+      '        except Exception: pass',
+      '        raise',
       'def load_disk_cache():',
       '    # 官方抓取结果磁盘缓存(加速 DSH 重启后的首屏加载)',
       '    try:',
       '        with open(DISK, encoding="utf-8") as f: d = json.load(f)',
-      '        if isinstance(d, dict) and d.get("at") and isinstance(d.get("records"), list): return d',
+      '        if isinstance(d, dict) and d.get("at") and isinstance(d.get("records"), list) and all(valid_record(r) for r in d["records"]): return d',
       '    except Exception:',
       '        pass',
       '    return None',
       'def save_disk_cache(records):',
       '    try:',
       '        os.makedirs(os.path.dirname(DISK), exist_ok=True)',
-      '        with open(DISK, "w", encoding="utf-8") as f:',
-      '            json.dump({"at": int(time.time() * 1000), "records": records, "truncated": out.get("truncated", False)}, f, ensure_ascii=False)',
+      '        atomic_json_write(DISK, {"schema": 1, "at": int(time.time() * 1000), "records": records, "truncated": out.get("truncated", False)}, private=True)',
       '    except Exception:',
       '        pass',
       'def ws_connect(host, port, path):',
@@ -383,7 +397,7 @@ return {
       '    CK = cfg.get("authCookie") or ""',
       '    WID = cfg.get("workspaceId") or ""',
       '# 磁盘缓存命中(15 分钟内):直接返回,无需 cookie/网络——DSH 重启后首屏秒开',
-      'if not os.environ.get("OCGO_LAST_TS"):',
+      'if not os.environ.get("OCGO_LAST_TS") and not os.environ.get("OCGO_FORCE"):',
       '    _d = load_disk_cache()',
       '    if _d and int(time.time() * 1000) - _d["at"] < 15 * 60 * 1000:',
       '        out["records"] = _d["records"]',
@@ -411,9 +425,8 @@ return {
       '        WID = fetch_workspace_id(CK)',
       '        if not WID: raise RuntimeError("WS_PARSE_FAIL")',
       '        try:',
-      '            os.makedirs(os.path.dirname(CFG), exist_ok=True)',
-      '            with open(CFG, "w", encoding="utf-8") as fh:',
-      '                json.dump({"authCookie": CK, "workspaceId": WID}, fh, ensure_ascii=False)',
+       '            os.makedirs(os.path.dirname(CFG), exist_ok=True)',
+       '            atomic_json_write(CFG, {"authCookie": CK, "workspaceId": WID}, private=True)',
       '            out["autoExtracted"] = True',
       '            out["browser"] = src_browser',
       '        except Exception:',
@@ -545,10 +558,10 @@ return {
       '                _seen.add(_k)',
       '                _combined.append(r)',
       '            out["records"] = _combined',
-      '    save_disk_cache(out["records"])',
-      '    out["ok"] = True',
-      '    out["truncated"] = len(out["records"]) >= MAXP * PAGE_SIZE',
-      '    out["skippedPages"] = _skipped',
+       '    out["ok"] = True',
+       '    out["truncated"] = len(out["records"]) >= MAXP * PAGE_SIZE',
+       '    out["skippedPages"] = _skipped',
+       '    save_disk_cache(out["records"])',
       'except Exception as e:',
       '    out["error"] = repr(e)[:200]',
       'print(json.dumps(out))',
@@ -561,7 +574,7 @@ return {
     // active, error, windows:{rolling,weekly,monthly}}]}。
     const QUOTA_PY = [
       'import json, os, urllib.request, base64',
-      'HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or r"C:\\Users\\Xenia"',
+      'HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or os.path.expanduser("~")',
       'AUTH = os.path.join(HOME, ".local", "share", "opencode", "auth.json")',
       'out = {"ok": True, "keys": [], "error": None}',
       'keys = []',
@@ -795,8 +808,16 @@ return {
       if (typeof _ocgoJoin !== 'function' || typeof _ocgoHomedir !== 'function') return null
       return _ocgoJoin(_ocgoHomedir(), '.config', 'dsh-opencode-go-usage-official.json')
     }
+    function officialRecordValid(r) {
+      return !!(r && typeof r === 'object' && typeof r.ts === 'string' && r.ts &&
+        typeof r.model === 'string' && r.model &&
+        Number.isFinite(Number(r.cost)) && Number(r.cost) >= 0)
+    }
     function toOfficialData(parsed) {
-      const rows = (parsed.records || []).map((r, i) => ({
+      if (!parsed || parsed.ok !== true || !Array.isArray(parsed.records) || !parsed.records.every(officialRecordValid)) {
+        throw new Error('官方数据格式异常')
+      }
+      const rows = parsed.records.map((r, i) => ({
         id: 'of-' + i,
         title: null,
         model: r.model,
@@ -818,7 +839,7 @@ return {
       try {
         if (!_ocgoExistsSync(p)) return null
         const d = JSON.parse(_ocgoReadFileSync(p, 'utf8'))
-        if (d && d.at && Array.isArray(d.records)) return d
+        if (d && d.at && Array.isArray(d.records) && d.records.every(officialRecordValid)) return d
       } catch (e) {}
       return null
     }
@@ -842,7 +863,7 @@ return {
         return "PY=$(command -v python3 || command -v python || true); if [ -z \"$PY\" ]; then echo python-not-found >&2; exit 1; fi; " + envPre + "\"$PY\" -c \"import base64;exec(base64.b64decode('" + payload + "'))\""
       }
       const envPart = (envPairs || []).map((e) => ";os.environ['" + e[0] + "']='" + e[1] + "'").join('')
-      return "$py='E:\\python\\python.exe';if(-not(Test-Path $py)){$c=Get-Command python -ErrorAction SilentlyContinue;if($c){$py=$c.Source}else{Write-Error 'python-not-found';exit 1}}; & $py -c \"import base64, os" + envPart + ";exec(base64.b64decode('" + payload + "'))\""
+      return "$c=Get-Command python -ErrorAction SilentlyContinue;if(-not $c){$c=Get-Command py -ErrorAction SilentlyContinue};if($c){$py=$c.Source}else{$py='E:\\python\\python.exe';if(-not(Test-Path $py)){Write-Error 'python-not-found';exit 1}}; & $py -c \"import base64, os" + envPart + ";exec(base64.b64decode('" + payload + "'))\""
     }
 
     // 磁盘记录的 ts 是 "MM/dd/yyyy HH:mm:ss"(美国格式):字符串 max 跨月/跨年
@@ -886,6 +907,9 @@ return {
           try { if (_ocgoExistsSync(p)) tail = String(_ocgoReadFileSync(p, 'utf8') || '').split('\n').slice(-200).join('\n') } catch (e) { tail = '' }
         }
         _ocgoWriteFileSync(p, tail + new Date().toISOString() + ' ' + msg + '\n', 'utf8')
+        if (typeof _ocgoChmodSync === 'function') {
+          try { _ocgoChmodSync(p, 0o600) } catch (e) { /* Windows/受限环境忽略 */ }
+        }
       } catch (e) { /* 日志失败静默 */ }
     }
 
@@ -920,7 +944,7 @@ return {
         try {
           // 全量抓取(12 并发,约 10-15s):首次必须返回完整历史(从开通日起),
           // 不能只给近期数据让用户误以为"从导入当天开始"。
-          const p = await runOfficial([])
+          const p = await runOfficial(force ? [['OCGO_FORCE', '1']] : [])
           if (!p || !p.ok) {
             ocgoLog('collectOfficial not ok: ' + ((p && p.error) || 'no data'))
             officialErrAt = Date.now()
@@ -995,13 +1019,52 @@ return {
       return incrementalInflight
     }
 
-    // 保存官方凭据配置(bundle 形态用注入的 node:fs;动态沙箱无 fs → bundle-only)
-    function saveOfficialConfig(payload) {
+    // 保存官方凭据配置:bundle 形态直接写文件;动态沙箱通过 shell 调用
+    // 最小 Python 写入器,避免客户端必须依赖 webServer 路由。
+    async function saveOfficialConfig(payload) {
       try {
-        if (typeof _ocgoWriteFileSync !== 'function') return { ok: false, error: 'bundle-only' }
-        const cfgPath = _ocgoJoin(_ocgoHomedir(), '.config', 'dsh-opencode-go-usage.json')
-        _ocgoMkdirSync(_ocgoJoin(_ocgoHomedir(), '.config'), { recursive: true })
-        _ocgoWriteFileSync(cfgPath, JSON.stringify(payload, null, 1), 'utf8')
+        const authCookie = payload && typeof payload.authCookie === 'string' ? payload.authCookie.trim() : ''
+        const workspaceId = payload && typeof payload.workspaceId === 'string' ? payload.workspaceId.trim() : ''
+        if (!authCookie || !workspaceId) return { ok: false, error: '需要 authCookie 和 workspaceId' }
+        const data = { authCookie, workspaceId }
+        if (typeof _ocgoWriteFileSync === 'function' && typeof _ocgoJoin === 'function' && typeof _ocgoHomedir === 'function' && typeof _ocgoMkdirSync === 'function') {
+          const cfgDir = _ocgoJoin(_ocgoHomedir(), '.config')
+          const cfgPath = _ocgoJoin(cfgDir, 'dsh-opencode-go-usage.json')
+          _ocgoMkdirSync(cfgDir, { recursive: true })
+          const tmpPath = cfgPath + '.tmp-' + Date.now()
+          _ocgoWriteFileSync(tmpPath, JSON.stringify(data, null, 1), 'utf8')
+          if (typeof _ocgoChmodSync === 'function') {
+            try { _ocgoChmodSync(tmpPath, 0o600) } catch (e) { /* Windows/受限环境忽略 */ }
+          }
+          if (typeof _ocgoRenameSync === 'function') {
+            _ocgoRenameSync(tmpPath, cfgPath)
+          } else {
+            _ocgoWriteFileSync(cfgPath, JSON.stringify(data, null, 1), 'utf8')
+          }
+        } else {
+          const savePy = [
+            'import base64, json, os',
+            'home = os.environ.get("USERPROFILE") or os.environ.get("HOME")',
+            'cfg = os.path.join(home, ".config", "dsh-opencode-go-usage.json")',
+            'os.makedirs(os.path.dirname(cfg), exist_ok=True)',
+            'data = json.loads(base64.b64decode(os.environ["OCGO_CFG_JSON"]).decode("utf-8"))',
+            'tmp = cfg + ".tmp-" + str(os.getpid())',
+            'try:',
+            '    with open(tmp, "w", encoding="utf-8") as fh:',
+            '        json.dump(data, fh, ensure_ascii=False, indent=1)',
+            '        fh.flush(); os.fsync(fh.fileno())',
+            '    try: os.chmod(tmp, 0o600)',
+            '    except Exception: pass',
+            '    os.replace(tmp, cfg)',
+            'except Exception:',
+            '    try: os.unlink(tmp)',
+            '    except Exception: pass',
+            '    raise',
+          ].join('\n')
+          const cmd = buildPythonCmd(utf8B64(savePy), [['OCGO_CFG_JSON', utf8B64(JSON.stringify(data))]])
+          const result = await shell.run(shell.resolve({ command: cmd, timeoutMs: 20000 }))
+          if (result.exitCode !== 0) return { ok: false, error: '保存配置失败' }
+        }
         officialCache = null // 清缓存,下次拉取使用新配置
         cache = null // 清 45s 聚合缓存:否则保存后 reload 仍命中旧缓存,白等一轮
         // 用户主动更新凭据 = 明确想立即重试:重置失败冷却,否则此前 NO_BROWSER
@@ -1183,9 +1246,12 @@ return {
           "$bat=Join-Path $env:TEMP 'ocgo-launch.bat'",
           "'@echo off' | Set-Content $bat -Encoding ASCII",
           "'start \"\" \"' + $edge + '\" --remote-debugging-port=9222 \"--user-data-dir=%USERPROFILE%\\.ocgo-browser-debug\" https://opencode.ai' | Add-Content $bat -Encoding ASCII",
-          "explorer.exe $bat",
-          "Start-Process -FilePath $edge -ArgumentList '--remote-debugging-port=9222',(\"--user-data-dir=$env:USERPROFILE\\.ocgo-browser-debug\"),'https://opencode.ai' -WindowStyle Minimized",
-          "for($i=0;$i -lt 26;$i++){ Start-Sleep -Milliseconds 750; if(Get-NetTCPConnection -LocalPort 9222 -State Listen -ErrorAction SilentlyContinue){ Write-Output 'OK'; exit 0 } }",
+           // Direct Start-Process is the primary path. Explorer is only a fallback
+           // after the first verification window, so the profile is not launched twice.
+           "Start-Process -FilePath $edge -ArgumentList '--remote-debugging-port=9222',(\"--user-data-dir=$env:USERPROFILE\\.ocgo-browser-debug\"),'https://opencode.ai' -WindowStyle Minimized",
+           "for($i=0;$i -lt 26;$i++){ Start-Sleep -Milliseconds 750; if(Get-NetTCPConnection -LocalPort 9222 -State Listen -ErrorAction SilentlyContinue){ Write-Output 'OK'; exit 0 } }",
+           "explorer.exe $bat",
+           "for($i=0;$i -lt 26;$i++){ Start-Sleep -Milliseconds 750; if(Get-NetTCPConnection -LocalPort 9222 -State Listen -ErrorAction SilentlyContinue){ Write-Output 'OK'; exit 0 } }",
           "Write-Output 'NO_LISTEN'; exit 3",
         ].join('\n')
         const spec = shell.resolve({ command: 'powershell -NoProfile -NonInteractive -EncodedCommand ' + utf16leB64(ps), timeoutMs: 60000 })
@@ -1218,7 +1284,7 @@ return {
         officialCache = null
         cache = null
         officialErrAt = 0
-        const p = await collectOfficial()
+        const p = await collectOfficial({ force: true })
         return { ok: true, official: p }
       } catch (e) {
         return { ok: false, error: String((e && e.message) || e) }
@@ -1230,21 +1296,23 @@ return {
       ctx.effect(() => harnessApi.handle('ocgo-usage:fetch', serve))
       ctx.effect(() => harnessApi.handle('ocgo-usage:launch-browser', launchDebugBrowser))
       ctx.effect(() => harnessApi.handle('ocgo-usage:retry', retryFetch))
+      ctx.effect(() => harnessApi.handle('ocgo-usage:config', saveOfficialConfig))
     }
     // bundle 模式没有 harness 桥:改走 webServer 的本地 HTTP 路由,
     // 客户端同源 fetch('/ocgo-usage/fetch') 取数,两种加载模式都可用。
     const ws = ctx.get('webServer')
     if (ws !== undefined && typeof ws.register === 'function') {
+      const jsonHeaders = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
       ctx.effect(() => ws.register({
         kind: 'exact',
         path: '/ocgo-usage/fetch',
         handler: async (req, res) => {
           try {
             const data = await fetchAll()
-            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.writeHead(200, jsonHeaders)
             res.end(JSON.stringify(data))
           } catch (e) {
-            res.writeHead(500, { 'Content-Type': 'application/json' })
+            res.writeHead(500, jsonHeaders)
             res.end(JSON.stringify({ ok: false, error: String((e && e.message) || e) }))
           }
         },
@@ -1257,16 +1325,19 @@ return {
           try {
             if (req.method !== 'POST') { res.writeHead(405); res.end(); return }
             let body = ''
-            for await (const chunk of req) body += chunk
+            for await (const chunk of req) {
+              body += String(chunk)
+              if (body.length > 32 * 1024) throw new Error('请求体过大')
+            }
             const cfg = JSON.parse(body || '{}')
             if (!cfg || typeof cfg.authCookie !== 'string' || !cfg.authCookie || typeof cfg.workspaceId !== 'string' || !cfg.workspaceId) {
               throw new Error('需要 authCookie 和 workspaceId')
             }
-            const r = saveOfficialConfig({ authCookie: cfg.authCookie.trim(), workspaceId: cfg.workspaceId.trim() })
-            res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' })
+            const r = await saveOfficialConfig(cfg)
+            res.writeHead(r.ok ? 200 : 400, jsonHeaders)
             res.end(JSON.stringify(r))
           } catch (e) {
-            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.writeHead(400, jsonHeaders)
             res.end(JSON.stringify({ ok: false, error: String((e && e.message) || e) }))
           }
         },
@@ -1279,10 +1350,10 @@ return {
           try {
             if (req.method !== 'POST') { res.writeHead(405); res.end(); return }
             const r = await launchDebugBrowser()
-            res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' })
+            res.writeHead(r.ok ? 200 : 400, jsonHeaders)
             res.end(JSON.stringify(r))
           } catch (e) {
-            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.writeHead(400, jsonHeaders)
             res.end(JSON.stringify({ ok: false, error: String((e && e.message) || e) }))
           }
         },
@@ -1295,10 +1366,10 @@ return {
           try {
             if (req.method !== 'POST') { res.writeHead(405); res.end(); return }
             const r = await retryFetch()
-            res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' })
+            res.writeHead(r.ok ? 200 : 400, jsonHeaders)
             res.end(JSON.stringify(r))
           } catch (e) {
-            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.writeHead(400, jsonHeaders)
             res.end(JSON.stringify({ ok: false, error: String((e && e.message) || e) }))
           }
         },

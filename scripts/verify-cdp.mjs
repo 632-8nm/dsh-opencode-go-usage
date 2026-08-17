@@ -51,11 +51,22 @@ except Exception as e:
 const dir = mkdtempSync(join(tmpdir(), 'ocgo-cdp-'))
 const py = join(dir, 'cdp_test.py')
 writeFileSync(py, driver, 'utf-8')
-try {
-  const out = execFileSync('E:\\python\\python.exe', [py], { encoding: 'utf-8', timeout: 30000 })
-  console.log(out)
-} catch (e) {
-  console.error('python failed:', e.message)
-  console.error(e.stdout || '')
+const candidates = process.platform === 'win32'
+  ? ['python', 'py', 'E:\\python\\python.exe']
+  : ['python3', 'python']
+let output = null
+let lastError = null
+for (const command of candidates) {
+  try {
+    output = execFileSync(command, [py], { encoding: 'utf-8', timeout: 30000 })
+    break
+  } catch (e) {
+    lastError = e
+  }
+}
+if (output == null) {
+  console.error('python failed:', lastError && lastError.message)
+  console.error((lastError && lastError.stdout) || '')
   process.exit(1)
 }
+console.log(output)
