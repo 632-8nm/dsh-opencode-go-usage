@@ -631,6 +631,15 @@ test('保存凭据后立即重试(重置失败冷却,不再白等 60s)', async (
   }
 })
 
+test('配置保存拒绝错误的 workspaceId 格式', async () => {
+  const env = makeHostEnv({ dynamic: true, sessions: [], webServerEnabled: false })
+  const m = await import(HOST_URL)
+  m.apply(env.ctx)
+  const result = await env.handlers.get('ocgo-usage:config')({ authCookie: 'Fe26.2-fake', workspaceId: 'not-a-workspace' })
+  assert.equal(result.ok, false)
+  assert.equal(result.error, 'workspaceId 格式应为 wrk_xxx')
+})
+
 test('配置端点拒绝过大请求体', async () => {
   const env = makeHostEnv({ dynamic: true, sessions: [] })
   const m = await import(HOST_URL)

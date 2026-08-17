@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-4d6bfe" alt="license: MIT" /></a>
-  <a href="https://github.com/Xenia0922/dsh-opencode-go-usage"><img src="https://img.shields.io/badge/version-v1.7.0-22c3a6" alt="最新版本" /></a>
+  <a href="https://github.com/Xenia0922/dsh-opencode-go-usage"><img src="https://img.shields.io/badge/version-v1.7.1-22c3a6" alt="最新版本" /></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2a3558" alt="平台：Windows、macOS、Linux" />
   <img src="https://img.shields.io/badge/runtime-DSH%20plugin-4d6bfe" alt="运行时：DSH 插件" />
   <img src="https://img.shields.io/badge/tests-27%20passing-22c3a6" alt="测试：27 通过" />
@@ -64,17 +64,20 @@ DSH 重启后动态定义会消失；长期使用请使用 Bundle 模式。
 
 安装完成后，右下角会出现 OpenCode Go FAB。官方视图采用一次性手动凭据配置：
 
-1. 在普通浏览器中打开 `opencode.ai` 的 usage 页面。
-2. 打开开发者工具，在 Application/Storage → Cookies 中复制 `auth` Cookie。
-3. 从 usage 页面地址中复制 `workspaceId`（形如 `wrk_xxx`）。
-4. 将两项填入面板并点击“保存并刷新”。
+1. 在普通浏览器中打开 `opencode.ai` 的 usage 页面并确认已登录。
+2. 按 `F12`（或 `Ctrl+Shift+I`）打开开发者工具；进入 **Application/应用 → Storage/存储 → Cookies → https://opencode.ai**。
+3. 在 Cookie 列表中找到名称为 `auth` 的行，只复制 **Value/值** 一栏。不要复制 Cookie 名称、`auth=` 前缀、整条 `Cookie:` 请求头，也不要带引号或空格。
+4. 回到 usage 页面地址栏，找到形如 `https://opencode.ai/workspace/wrk_123/usage` 的地址，只复制其中的 `wrk_123` 作为 `workspaceId`。
+5. 将两项分别填入面板的两个输入框，点击“保存并刷新”。看到“已保存,刷新中…”后等待官方视图更新。
+
+如果浏览器的 Application/应用标签没有显示，点击开发者工具顶部的 `>>` 更多标签；也可以使用 Firefox 的“存储/Storage”面板完成相同操作。
 
 凭据保存后，后续刷新不需要再次登录，也不需要以调试模式启动浏览器。Safari、Firefox 也可以用于手动复制凭据。
 
 手动填写：
 
-- `authCookie`：浏览器开发者工具中 `opencode.ai` 的 `auth` Cookie 值。
-- `workspaceId`：usage 页面地址中的 `wrk_xxx`。
+- `authCookie`：`auth` Cookie 的 Value/值，不能包含 `auth=` 前缀或整条 Cookie header。
+- `workspaceId`：usage URL 中的 `wrk_xxx`，只填写 `wrk_` 开头的 ID。
 
 配置保存在本机：
 
