@@ -308,6 +308,28 @@ return {
       if (typeof _ocgoJoin !== 'function' || typeof _ocgoHomedir !== 'function') return null
       return _ocgoJoin(_ocgoHomedir(), '.config', 'dsh-opencode-go-usage-official.json')
     }
+    // 展示快照:持久化 fetchAll 算好的展示结果(quota + official.vd + dsh.vd 等),
+    // 重启后首屏直接读快照渲染,无需重新抓取/聚合计算,后台再异步刷新最新。
+    function snapshotPath() {
+      if (typeof _ocgoJoin !== 'function' || typeof _ocgoHomedir !== 'function') return null
+      return _ocgoJoin(_ocgoHomedir(), '.config', 'dsh-opencode-go-usage-snapshot.json')
+    }
+    function readSnapshot() {
+      const p = snapshotPath()
+      if (!p || typeof _ocgoReadFileSync !== 'function' || typeof _ocgoExistsSync !== 'function') return null
+      try {
+        if (!_ocgoExistsSync(p)) return null
+        return JSON.parse(_ocgoReadFileSync(p, 'utf8'))
+      } catch (e) { return null }
+    }
+    function writeSnapshot(data) {
+      const p = snapshotPath()
+      if (!p || typeof _ocgoWriteFileSync !== 'function' || typeof _ocgoMkdirSync !== 'function') return
+      try {
+        _ocgoMkdirSync(_ocgoJoin(_ocgoHomedir(), '.config'), { recursive: true })
+        _ocgoWriteFileSync(p, JSON.stringify(data), 'utf8')
+      } catch (e) { /* 快照写失败静默 */ }
+    }
     function toOfficialData(parsed) {
       const rows = (parsed.records || []).map((r, i) => ({
         id: 'of-' + i,
@@ -712,6 +734,17 @@ return {
       return scanInflight
     }
 
+    // 后台刷新:清内存 cache 后再跑一次 fetchAll,强制重新抓取/计算,结果写回快照。
+    let bgRefreshInflight = null
+    async function refreshAllInBackground() {
+      if (bgRefreshInflight) return bgRefreshInflight
+      bgRefreshInflight = (async () => {
+        cache = null
+        await fetchAll().catch((e) => { ocgoLog('bg refresh: ' + String((e && e.message) || e)) })
+      })().finally(() => { bgRefreshInflight = null })
+      return bgRefreshInflight
+    }
+
     async function fetchAll() {
       // 若 officialCache 已定论(NEED_CONFIG 需手动粘贴 / 抓取成功),不要复用
       // 45s 缓存里可能存的"旧 loading 占位"——否则前端会一直转"加载中"直到
@@ -719,11 +752,21 @@ return {
       const officialSettled = !!(officialCache && officialCache.data
         && (officialCache.data.ok || officialCache.data.error === 'NEED_CONFIG'))
       if (cache && !officialSettled && Date.now() - cache.at < 45000) return cache.data
+      // 快照秒开:内存 cache 不可用时,读上次持久化的展示快照直接返回(能展开、
+      // 有完整聚合数据),同时后台刷新最新到内存+快照,不阻塞首响应。
+      if (!cache) {
+        const snap = readSnapshot()
+        if (snap && snap.ok && snap.quota && snap.official && snap.official.ok && snap.official.vd) {
+          cache = { at: Date.now(), data: snap }
+          // 后台异步刷新(绕过本函数同步路径),完成后写新快照 + 更新 cache
+          setTimeout(() => { refreshAllInBackground() }, 0)
+          return snap
+        }
+      }
       if (inflight) return inflight
       inflight = (async () => {
-        const quotaP = collectQuota().catch(() => ({ error: 'quota 异常' }))
-        // quota 不阻塞首响应:最多等 3s,超时先用占位(quota:null),框架先渲染出来,
-        // 配额环形图后续由 60s 轮询补上。避免冷启动时 quota fetch 慢导致面板卡在 FAB 无法展开。
+        // 配额:同步 await(接口 ~2s),第一次响应就带上百分比,前端拿到即渲染。
+        // 带 30s 超时+重试的 collectQuota 内部已兜底,不会因网络故障卡死。
         // 数据实时性:内存缓存(本次会话已抓到的真实数据)直接展示,每次刷新
         // 增量抓最新页(1-3s);磁盘缓存**不再秒开旧数据**(用户要求:官方视图
         // 真实数据到位前显示"加载中",不拿可能过期的缓存顶)——磁盘缓存只作
@@ -746,24 +789,24 @@ return {
             }
           } catch (e) { /* 读失败保守按有凭据处理,交给既有流程 */ }
         }
+        // 官方明细首屏:优先内存缓存,其次磁盘缓存(毫秒级,秒开旧数据)。
+        // 用旧数据先渲染,后台增量/全量刷新成最新,避免"错过后台抓取第一屏"。
         let off = (officialCache && officialCache.data.ok) ? officialCache.data : null
         let officialErr = (officialCache && !officialCache.data.ok) ? officialCache.data : null
         if (noCred) {
           officialErr = { ok: false, error: 'NEED_CONFIG' }
-        }
-        if (!off) {
-          // 无真实数据(内存缓存):优先增量(1-3s 拿到最新完整集,比全量快),
-          // 增量以磁盘缓存为基准;无磁盘缓存才全量抓取(10-15s,后台完成
-          // 后 syncOfficialToCache 自动更新,客户端 fast-poll 拿到数据)。
+        } else if (!off) {
           const disk = readOfficialDisk()
           if (disk && disk.records.length) {
-            triggerIncremental().catch(() => {})
-          } else if (!noCred) {
-            collectOfficial().catch(() => {})
+            off = toOfficialData({ records: disk.records, truncated: !!disk.truncated })
           }
-        } else if (off.ok) {
-          // 实时增量同步(并发去重由 triggerIncremental 内部保证)
+        }
+        if (off) {
+          // 已有(内存或磁盘)数据:后台增量刷新成最新(1-3s 后覆盖)
           triggerIncremental().catch(() => {})
+        } else if (!noCred) {
+          // 既无内存也无磁盘缓存:后台全量抓取
+          collectOfficial().catch(() => {})
         }
         // DSH 会话扫描:5 分钟内复用(lastScan),过期则在后台刷新——
         // 响应不等待扫描,避免 60s 轮询被长请求拖死。
@@ -771,11 +814,8 @@ return {
           refreshScanAsync()
         }
         const dshRaw = lastScan ? lastScan.rows : []
-        // quota 最多等 3s,超时用 null 占位(框架先出,数据后补)
-        const quota = await Promise.race([
-          quotaP,
-          new Promise((resolve) => setTimeout(() => resolve(null), 3000)),
-        ])
+        // 同步 await 配额(带超时+重试),首屏即带百分比;失败给 error 由前端显示。
+        const quota = await collectQuota().catch((e) => ({ error: String((e && e.message) || e) }))
         const dshRows = backfillDsh(dshRaw, off && off.ok && off.rows ? off.rows : null)
         const dsh = buildView(dshRows)
         dsh.matchedOfficial = dshRows.matchedOfficial || 0
@@ -805,6 +845,10 @@ return {
           data.official = officialCache.data
         }
         cache = { at: Date.now(), data }
+        // 数据完整时才写展示快照(配额有值 + 官方明细就绪),供重启后首屏秒开。
+        if (data.quota && data.official && data.official.ok && data.official.vd) {
+          writeSnapshot(data)
+        }
         return data
       })()
       try {
