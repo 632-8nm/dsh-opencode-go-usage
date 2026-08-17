@@ -988,7 +988,9 @@ return {
         const cfgPath = _ocgoJoin(_ocgoHomedir(), '.config', 'dsh-opencode-go-usage.json')
         _ocgoMkdirSync(_ocgoJoin(_ocgoHomedir(), '.config'), { recursive: true })
         _ocgoWriteFileSync(cfgPath, JSON.stringify(payload, null, 1), 'utf8')
-        officialCache = null // 清缓存,下次拉取使用新配置
+        officialCache = null // 清官方缓存,下次拉取使用新配置
+        cache = null        // 清 45s 聚合缓存,否则保存后 reload 命中旧结果(闪烁报错)
+        officialErrAt = 0   // 重置失败冷却,保存后立即重试抓取,不再白等 60s
         return { ok: true }
       } catch (e) {
         return { ok: false, error: String((e && e.message) || e) }
