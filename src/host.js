@@ -18,7 +18,7 @@ return {
     if (shell === undefined || sq === undefined) return
 
     // 与 package.json version 同步(build-lib 回归门禁校验,防漂移)
-    const VERSION = '1.6.27'
+    const VERSION = '1.6.28'
 
     // --- 更新检查(轻量):启动后异步读 raw GitHub 的 package.json 比对版本,
     // 有新版本时面板提示"git pull 后重启"。不自动改代码;网络失败/受限环境
@@ -1134,6 +1134,10 @@ return {
           return { ok: false, error: 'shell 不可用' }
         }
         const plat = (typeof process !== 'undefined' && process.platform) || ''
+        // 端口验证轮询(sh 版,与 Windows 的 20s 窗口一致;curl 检测 CDP 端点)。
+        // macOS/Linux 此前"启动即 echo OK"——和 Windows 旧版一样会假成功,
+        // Edge/Chrome 冷启动 10-20s,必须等 9222 真正监听才算成功。
+        const POLL = 'for i in $(seq 1 26); do sleep 0.75; if curl -s -m 1 http://127.0.0.1:9222/json >/dev/null 2>&1; then echo OK; exit 0; fi; done; echo NO_LISTEN; exit 3'
         let cmd = null
         if (plat === 'darwin') {
           // macOS:遍历常见 Chromium 系 .app(系统 + 用户目录),open -na 新实例传参
@@ -1141,16 +1145,20 @@ return {
           const chain = apps.map((a) =>
             'open -na "' + a + '" --args --remote-debugging-port=9222 --user-data-dir="$HOME/.ocgo-browser-debug" https://opencode.ai 2>/dev/null'
           ).join(' || ')
-          cmd = chain + ' || { echo NO_BROWSER; exit 2; }; echo OK'
+          cmd = chain + ' || { echo NO_BROWSER; exit 2; }; ' + POLL
         } else if (plat === 'linux') {
           // Linux:nohup 后台脱离进程树;遍历常见 Chromium 系可执行文件
-          cmd = 'for B in google-chrome-stable google-chrome chromium chromium-browser microsoft-edge brave-browser vivaldi opera; do P=$(command -v $B 2>/dev/null) && { nohup "$P" --remote-debugging-port=9222 --user-data-dir="$HOME/.ocgo-browser-debug" https://opencode.ai >/dev/null 2>&1 & echo OK; exit 0; }; done; echo NO_BROWSER; exit 2'
+          cmd = 'for B in google-chrome-stable google-chrome chromium chromium-browser microsoft-edge brave-browser vivaldi opera; do P=$(command -v $B 2>/dev/null) && { nohup "$P" --remote-debugging-port=9222 --user-data-dir="$HOME/.ocgo-browser-debug" https://opencode.ai >/dev/null 2>&1 & ' + POLL + '; }; done; echo NO_BROWSER; exit 2'
         }
         if (cmd) {
           const spec = shell.resolve({ command: cmd, timeoutMs: 30000 })
           const result = await shell.run(spec)
           const text = String(typeof result.stdout === 'string' ? result.stdout : (result.stdout && result.stdout.text != null ? result.stdout.text : ''))
-          if (result.exitCode !== 0 || !/OK/.test(text)) return { ok: false, error: 'NO_BROWSER' }
+          if (result.exitCode !== 0 || !/OK/.test(text)) {
+            // 与 Windows 分支一致:NO_LISTEN 明确报错,不假报成功
+            if (/NO_LISTEN/.test(text)) return { ok: false, error: 'NO_LISTEN: 浏览器启动较慢或失败——请稍等 20 秒后点刷新;仍未出现则再点一次启动按钮' }
+            return { ok: false, error: 'NO_BROWSER' }
+          }
           return { ok: true }
         }
         // Windows(及动态沙箱无 process 信息时):EncodedCommand + explorer 中转。

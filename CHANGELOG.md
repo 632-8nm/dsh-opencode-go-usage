@@ -2,6 +2,13 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.28] - 2026-08-17
+
+### 修复(macOS/Linux 一键启动同样"假成功"——补端口验证)
+- macOS/Linux 分支此前"启动即 echo OK"(与 Windows 旧版相同的假成功):Edge/Chrome 冷启动 10-20s,没等 9222 监听就返回成功
+- **统一 20s 验证轮询**(`curl http://127.0.0.1:9222/json` 检测 CDP 端点,26 次 × 750ms):macOS `open -na` 链与 Linux `nohup` 分支启动后均等待真实监听,成功 OK / 失败 `NO_LISTEN`(错误文案与 Windows 一致);浏览器候选 macOS/Linux 已是 Chromium 全家桶(Chrome/Edge/Brave/Vivaldi/Opera/Arc/Chromium)
+- 顺带验证:写盘链路无问题(实测 CDP:9222 自动提取 + 14,628 条全量抓取 + 凭据/磁盘缓存均成功落盘——此前"未写盘"为实例状态/检查时机所致,非沙箱拦截)
+
 ## [1.6.27] - 2026-08-17
 
 ### 功能(抓不到就"再抓一次"按钮 + 无 Edge 用户兜底)
