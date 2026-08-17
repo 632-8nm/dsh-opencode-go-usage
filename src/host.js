@@ -13,12 +13,8 @@
 // 弹性:数据源缺失自动降级(OPENCODE_DATA 优先,各源独立可用性检测)。
 return {
   apply(ctx, config) {
-    const shell = ctx.get('shell')
     const sq = ctx.get('sessionQuery')
-    // 不受限的子进程 seam:DSH 里 MCP/LSP 等 spawn 真实进程用的同一通道。
-    // 起 GUI 浏览器必须走它(ctx.shell 经 ACL 受限令牌,起不了 GUI)。缺失时回退 shell。
-    const subprocess = ctx.get('subprocess')
-    if (shell === undefined || sq === undefined) return
+    if (sq === undefined) return
 
     const PRICING = {
       // 官方定价(opencode.ai/docs/go,per 1M tokens;deepseek-v4-flash 限时 2× 用量)。
@@ -186,369 +182,54 @@ return {
       return out
     }
 
-    // UTF-8 安全的 base64.Native `btoa`(Node ≥16 的 whatwg 实现)只接受 Latin-1,
-    // 遇到 >0xFF 的字符(如 PY 脚本里的中文标题 "Codex 会话")会抛 InvalidCharacterError,
-    // 会直接打断 host 半区。先经 TextEncoder 落到 0-255 字节再编码即可稳定工作——
-    // TextEncoder 在动态沙箱与静态 Node 都是全局。
-    const utf8B64 = (s) => {
-      const bytes = new TextEncoder().encode(s)
-      let bin = ''
-      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
-      return btoa(bin)
-    }
 
-    // --- 官方账户级用量明细(usage.list server-fn) ---
-    // 凭据优先读配置 ~/.config/dsh-opencode-go-usage.json;缺失/过期时自动从
-    // Edge cookie 库提取(auth cookie → workspaces API 解析 workspaceId),Edge
-    // 运行时数据库被锁则返回 EDGE_RUNNING,由面板引导手动粘贴或关闭 Edge。
-    // 返回逐请求官方计费明细(cost 单位 1e-8 美元),账户级、跨设备,与官网账单一致。
-    const OFFICIAL_SCRIPT = [
-      'import json, os, re, time, urllib.request, urllib.parse, base64',
-      'HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or r"C:\\Users\\Xenia"',
-      'CFG = os.path.join(HOME, ".config", "dsh-opencode-go-usage.json")',
-      'FID = "bfd684bfc2e4eed05cd0b518f5e4eafd3f3376e3938abb9e536e7c03df831e5c"',
-      'PAGE_SIZE = 50',
-      'UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/143.0.0.0 Safari/537.36"',
-      'out = {"ok": False, "error": None, "records": [], "truncated": False, "skippedPages": 0, "autoExtracted": False, "browser": None}',
-      'DISK = os.path.join(HOME, ".config", "dsh-opencode-go-usage-official.json")',
-      'def load_disk_cache():',
-      '    # 官方抓取结果磁盘缓存(加速 DSH 重启后的首屏加载)',
-      '    try:',
-      '        with open(DISK, encoding="utf-8") as f: d = json.load(f)',
-      '        if isinstance(d, dict) and d.get("at") and isinstance(d.get("records"), list): return d',
-      '    except Exception:',
-      '        pass',
-      '    return None',
-      'def save_disk_cache(records):',
-      '    try:',
-      '        os.makedirs(os.path.dirname(DISK), exist_ok=True)',
-      '        with open(DISK, "w", encoding="utf-8") as f:',
-      '            json.dump({"at": int(time.time() * 1000), "records": records, "truncated": out.get("truncated", False)}, f, ensure_ascii=False)',
-      '    except Exception:',
-      '        pass',
-      'CK = ""',
-      'WID = ""',
-      'cfg = None',
-      'try:',
-      '    with open(CFG, encoding="utf-8-sig") as fh: cfg = json.load(fh)',
-      'except Exception:',
-      '    cfg = None',
-      'if cfg:',
-      '    CK = cfg.get("authCookie") or ""',
-      '    WID = cfg.get("workspaceId") or ""',
-      '# 磁盘缓存命中(15 分钟内):直接返回,无需 cookie/网络——DSH 重启后首屏秒开',
-      'if not os.environ.get("OCGO_LAST_TS"):',
-      '    _d = load_disk_cache()',
-      '    if _d and int(time.time() * 1000) - _d["at"] < 15 * 60 * 1000:',
-      '        out["records"] = _d["records"]',
-      '        out["ok"] = True',
-      '        out["diskCached"] = True',
-      '        out["diskAt"] = _d["at"]',
-      '        out["truncated"] = bool(_d.get("truncated"))',
-      '        print(json.dumps(out))',
-      '        raise SystemExit',
-      'if not CK or not WID:',
-      '    # 去除 CDP 自动提取:浏览器调试端口在 Windows 上因残留进程常被 merge 忽略,',
-      '    # 自动提取实际不可靠。改为直接要求用户在面板手动粘贴一次凭据(authCookie + workspaceId),',
-      '    # 保存后插件自动读取配置,无需再走浏览器/cookie/调试端口。',
-      '    out["error"] = "NEED_CONFIG"',
-      '    out["autoExtracted"] = False',
-      '    print(json.dumps(out))',
-      '    raise SystemExit',
-      'def fetch_text(page):',
-      '    args = urllib.parse.quote(json.dumps([WID, page]))',
-      '    url = "https://opencode.ai/_server?id=%s&args=%s" % (FID, args)',
-      '    req = urllib.request.Request(url, headers={',
-      '        "Cookie": "auth=" + CK,',
-      '        "X-Server-Id": FID,',
-      '        "X-Server-Instance": "server-fn:ocgo-%d" % page,',
-      '        "Origin": "https://opencode.ai",',
-      '        "Referer": "https://opencode.ai/workspace/%s/usage" % WID,',
-      '        "User-Agent": UA,',
-      '    })',
-      '    for attempt in range(2):',
-      '        try:',
-      '            with urllib.request.urlopen(req, timeout=20) as r:',
-      '                return r.read().decode("utf-8", "replace")',
-      '        except Exception:',
-      '            time.sleep(0.8)',
-      '    return None',
-      'def parse_text(text):',
-      '    page = []',
-      '    for b in re.findall(r\'\\{id:"usg_[^}]*?\\}\', text):',
-      '        ts = re.search(r\'new Date\\("\' + r\'([^"]+)"\\)\', b)',
-      '        model = re.search(r\'model:"([^"]+)"\', b)',
-      '        cost = re.search(r\'cost:(\\d+)\', b)',
-      '        if not (ts and model and cost): continue',
-      '        def num(p):',
-      '            m = re.search(p, b)',
-      '            return int(m.group(1)) if m else 0',
-      '        page.append({"ts": ts.group(1), "model": model.group(1),',
-      '            "ti": num(r\'inputTokens:(\\d+)\'), "to": num(r\'outputTokens:(\\d+)\'),',
-      '            "rt": num(r\'reasoningTokens:(\\d+)\'), "cr": num(r\'cacheReadTokens:(\\d+)\'),',
-      '            "cost": int(cost.group(1))})',
-      '    return page',
-      'def _pts(ts):',
-      '    # 时间戳 → epoch(相对比较用,本地时区一致即可)。字符串比较跨月/跨年',
-      '    # 会误判大小(如 "12/01/2025" < "01/02/2026"),导致增量停早丢新记录。',
-      '    # 兼容两种实际格式:ISO("2026-08-16T03:08:12.000Z")与美国格式',
-      '    # ("MM/dd/yyyy HH:mm:ss");都失败返回 None(调用方退化为字符串比较)',
-      '    try:',
-      '        _s = ts.strip()',
-      '        if _s.endswith("Z"): _s = _s[:-1]',
-      '        if "." in _s: _s = _s.split(".", 1)[0]',
-      '        return time.mktime(time.strptime(_s, "%Y-%m-%dT%H:%M:%S"))',
-      '    except Exception:',
-      '        pass',
-      '    try:',
-      '        return time.mktime(time.strptime(ts, "%m/%d/%Y %H:%M:%S"))',
-      '    except Exception:',
-      '        return None',
-      'from concurrent.futures import ThreadPoolExecutor',
-      'LAST = os.environ.get("OCGO_LAST_TS") or ""',
-      'ABS_MAXP = 5000  # 绝对安全上限(25 万条),防无限循环',
-      'try:',
-      '    # 页数上限默认放宽到 5000:usage.list 数据超过 7500 条(150 页)时不再截断,',
-      '    # 抓取在"不足 50 条的页"自然结束;用户可在配置 maxPages 覆盖',
-      '    MAXP = int((cfg or {}).get("maxPages", 5000)) if cfg else 5000',
-      '    MAXP = min(MAXP, ABS_MAXP)',
-      '    page = 0',
-      '    _skipped = 0  # 单页失败被跳过的页数(诊断用,不终止抓取)',
-      '    with ThreadPoolExecutor(max_workers=12) as ex:',
-      '        _empty = 0  # 连续失败/空页计数:只有连续 5 页才判定数据尽头',
-      '        while page < MAXP:',
-      '            batch = list(range(page, min(page + 12, MAXP)))',
-      '            results = list(ex.map(fetch_text, batch))',
-      '            for pg, text in zip(batch, results):',
-      '                if text is None:',
-      '                    # 单页两次请求均失败(超时/网络抖动):跳过该页继续。',
-      '                    # 绝不能因一页失败终止整次抓取——否则数据"抓不全"',
-      '                    # (7498/9070/11270 条数差异的根因)',
-      '                    _empty += 1',
-      '                    _skipped += 1',
-      '                    if _empty >= 5:',
-      '                        page = MAXP',
-      '                        break',
-      '                    continue',
-      '                pgs = parse_text(text)',
-      '                if not pgs:',
-      '                    # 空页:可能是数据尽头,也可能是单页解析失败——重试一次再定',
-      '                    _retry = fetch_text(pg)',
-      '                    pgs = parse_text(_retry) if _retry else []',
-      '                if not pgs:',
-      '                    _empty += 1',
-      '                    if _empty >= 5:',
-      '                        page = MAXP',
-      '                        break',
-      '                    continue',
-      '                _empty = 0',
-      '                if LAST:',
-      '                    # 增量:只保留比上次新的记录;本页时间已不新于上次即停止。',
-      '                    # 时间戳按 epoch 比较(跨月/跨年正确);任一侧解析失败则',
-      '                    # 退化为字符串比较(仅同月内可靠,兜底不中断)',
-      '                    _l = _pts(LAST)',
-      '                    _p0 = _pts(pgs[0]["ts"]) if pgs else None',
-      '                    if _l is not None and _p0 is not None:',
-      '                        out["records"].extend(r for r in pgs if _pts(r["ts"]) > _l)',
-      '                        if len(pgs) < PAGE_SIZE or _pts(pgs[-1]["ts"]) <= _l:',
-      '                            page = MAXP',
-      '                            break',
-      '                    else:',
-      '                        out["records"].extend(r for r in pgs if r["ts"] > LAST)',
-      '                        if len(pgs) < PAGE_SIZE or pgs[-1]["ts"] <= LAST:',
-      '                            page = MAXP',
-      '                            break',
-      '                else:',
-      '                    out["records"].extend(pgs)',
-      '                    if len(pgs) < PAGE_SIZE:',
-      '                        page = MAXP',
-      '                        break',
-      '                page = pg + 1',
-      '            time.sleep(0.15)',
-      '    if LAST:',
-      '        # 增量模式:与磁盘旧缓存合并去重(新记录在前),结果仍为完整集',
-      '        _old = load_disk_cache()',
-      '        if _old and _old["records"]:',
-      '            _seen = set()',
-      '            _combined = []',
-      '            for r in out["records"] + _old["records"]:',
-      '                _k = (r["ts"], r["model"], r["cost"], r.get("ti", 0), r.get("to", 0), r.get("rt", 0), r.get("cr", 0))',
-      '                if _k in _seen: continue',
-      '                _seen.add(_k)',
-      '                _combined.append(r)',
-      '            out["records"] = _combined',
-      '    save_disk_cache(out["records"])',
-      '    out["ok"] = True',
-      '    out["truncated"] = len(out["records"]) >= MAXP * PAGE_SIZE',
-      '    out["skippedPages"] = _skipped',
-      'except Exception as e:',
-      '    out["error"] = repr(e)[:200]',
-      'print(json.dumps(out))',
-    ].join('\n')
-    const OFFICIAL_PAYLOAD = utf8B64(OFFICIAL_SCRIPT)
 
-    // --- 数据源 4:官方配额(多 key:key 池逐 key 抓取;单 key 双通道容错) ---
-    // OCGO_KEYS_JSON(可选)= base64(JSON [{"name","key","active"}]);缺省回退
-    // auth.json 单 key(兼容动态沙箱/无 yaml 环境)。输出 {ok, keys:[{name,
-    // active, error, windows:{rolling,weekly,monthly}}]}。
-    const QUOTA_PY = [
-      'import json, os, urllib.request, base64',
-      'HOME = os.environ.get("USERPROFILE") or os.environ.get("HOME") or r"C:\\Users\\Xenia"',
-      'AUTH = os.path.join(HOME, ".local", "share", "opencode", "auth.json")',
-      'out = {"ok": True, "keys": [], "error": None}',
-      'keys = []',
-      'RAW = os.environ.get("OCGO_KEYS_JSON") or ""',
-      'try:',
-      '    if RAW:',
-      '        keys = json.loads(base64.b64decode(RAW).decode("utf-8"))',
-      '    else:',
-      '        with open(AUTH, "r", encoding="utf-8") as f:',
-      '            k = json.load(f).get("opencode-go", {}).get("key")',
-      '        if k: keys = [{"name": "default", "key": k, "active": True}]',
-      'except Exception:',
-      '    keys = []',
-      'if not keys:',
-      '    out["error"] = "no keys"',
-      'else:',
-      '    for it in keys:',
-      '        entry = {"name": it.get("name", "default"), "active": bool(it.get("active")), "error": None, "windows": None}',
-      '        try:',
-      '            req = urllib.request.Request("https://opencode.ai/zen/go/v1/usage", headers={"Authorization": "Bearer " + it["key"], "User-Agent": "dsh-ocgo-usage"})',
-      '            with urllib.request.urlopen(req, timeout=15) as r:',
-      '                data = json.loads(r.read().decode("utf-8"))',
-      '            u = data.get("usage") or {}',
-      '            windows = {}',
-      '            for k in ("rolling", "weekly", "monthly"):',
-      '                v = u.get(k)',
-      '                if v and isinstance(v, dict):',
-      '                    windows[k] = {"percent": v.get("percent"), "status": v.get("status"), "resetsAt": v.get("resetsAt")}',
-      '            entry["windows"] = windows if windows else None',
-      '            if not windows: entry["error"] = "empty usage payload"',
-      '        except Exception as e:',
-      '            entry["error"] = repr(e)[:200]',
-      '        out["keys"].append(entry)',
-      'print(json.dumps(out))',
-    ].join('\n')
-    const QUOTA_PY_PAYLOAD = utf8B64(QUOTA_PY)
 
-    // 多 key 发现(bundle 形态):config.keyNames 显式指定 → $DSH_HOME/.credentials.yaml
-    // 的 OPENCODE_GO_KEY_<name> 池(明文 yaml)→ 回退 OPENCODE_GO_API_KEY 单 key;
-    // 最后统一追加 OpenCode CLI 凭据(auth.json)。动态沙箱/找不到时返回空。
-    function discoverGoKeys() {
-      const keys = []
-      const home = (typeof process !== 'undefined' && process.env && process.env.DSH_HOME) || ''
-      if (home && typeof _ocgoReadFileSync === 'function' && typeof _ocgoExistsSync === 'function' && typeof _ocgoJoin === 'function') {
-        try {
-          const p = _ocgoJoin(home, '.credentials.yaml')
-          if (_ocgoExistsSync(p)) {
-            const text = String(_ocgoReadFileSync(p, 'utf8') || '')
-            const pool = []
-            for (const m of text.matchAll(/^OPENCODE_GO_KEY_([A-Za-z0-9_]+)\s*:\s*(.+?)\s*$/gm)) {
-              if (m[1] !== 'ACTIVE' && m[2]) pool.push({ name: m[1], key: m[2].trim() })
-            }
-            const actM = text.match(/^OPENCODE_GO_KEY_ACTIVE\s*:\s*(.+?)\s*$/m)
-            const activeName = actM ? actM[1].trim() : ''
-            const names = (config && config.keyNames) ? config.keyNames : null
-            if (names && names.length) {
-              const byName = new Map(pool.map((it) => [it.name, it]))
-              for (const n of names) {
-                const it = byName.get(n)
-                if (it) keys.push({ name: it.name, key: it.key, active: it.name === activeName })
-              }
-            } else if (pool.length) {
-              for (const it of pool) keys.push({ name: it.name, key: it.key, active: it.name === activeName })
-            } else {
-              const single = text.match(/^OPENCODE_GO_API_KEY\s*:\s*(.+?)\s*$/m)
-              if (single && single[1]) keys.push({ name: 'default', key: single[1].trim(), active: true })
-            }
-          }
-        } catch (e) { /* 发现失败走回退 */ }
-      }
-      // 追加 OpenCode CLI 凭据(auth.json 的 opencode-go.key):它是另一个真实
-      // 的 Go key(yaml 来源之外),加入池后配额区立即显示多 key 标签——
-      // 同一账号时数据一致,不同账号时可对比各 key 配额。仅 bundle 形态可用。
-      if (typeof _ocgoReadFileSync === 'function' && typeof _ocgoExistsSync === 'function' && typeof _ocgoJoin === 'function' && typeof _ocgoHomedir === 'function') {
-        try {
+    // 读取当前 opencode-go 凭据 key(纯 JS,单 key)。优先 auth.json 的 opencode-go.key。
+    function findPrimaryGoKey() {
+      try {
+        if (typeof _ocgoReadFileSync === 'function' && typeof _ocgoExistsSync === 'function'
+          && typeof _ocgoJoin === 'function' && typeof _ocgoHomedir === 'function') {
           const ap = _ocgoJoin(_ocgoHomedir(), '.local', 'share', 'opencode', 'auth.json')
           if (_ocgoExistsSync(ap)) {
             const auth = JSON.parse(String(_ocgoReadFileSync(ap, 'utf8') || '{}'))
             const k = auth && auth['opencode-go'] && auth['opencode-go'].key
-            if (k && !keys.some((it) => it.key === k)) {
-              keys.push({ name: 'cli', key: k, active: keys.length === 0 })
-            }
+            if (k) return String(k).trim()
           }
-        } catch (e) { /* auth.json 读取失败忽略 */ }
-      }
-      return keys
+        }
+      } catch (e) { /* ignore */ }
+      return null
     }
 
+    // 官方配额 —— 纯 JS 单 key 实现:读 opencode-go key → fetch /zen/go/v1/usage。
     async function collectQuota() {
-      const stdoutText = (raw) => typeof raw === 'string' ? raw : (raw && raw.text != null ? String(raw.text) : '')
-      const plat = (typeof process !== 'undefined' && process.platform) || ''
-      // 新结构解析:{ok, keys:[{name,active,error,windows:{rolling,weekly,monthly}}]}
-      const parsePy = (text) => {
+      const key = findPrimaryGoKey()
+      if (!key) return { error: 'no opencode-go key' }
+      // 冷启动时配额接口可能首次响应慢(>15s),超时会导致"配额查询失败:aborted"。
+      // 放宽到 30s 并重试一次,第二次通常已建立连接、秒回。
+      const timeoutMs = 30000
+      for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const data = JSON.parse(text)
-          if (data && Array.isArray(data.keys)) return { keys: data.keys }
-          if (data && data.error) return { error: data.error }
-          return { error: 'unexpected payload' }
-        } catch (e) {
-          return { error: 'parse: ' + String(e && e.message || e) }
-        }
-      }
-      // 旧结构(curl 通道的 usage 单 key)包装成 keys
-      const parseCurl = (text) => {
-        try {
-          const data = JSON.parse(text)
-          const u = data.usage || {}
+          const res = await fetch('https://opencode.ai/zen/go/v1/usage', {
+            headers: { 'Authorization': 'Bearer ' + key, 'User-Agent': 'dsh-ocgo-usage' },
+            signal: (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(timeoutMs) : undefined,
+          })
+          if (!res.ok) return { error: 'http ' + res.status }
+          const data = await res.json()
+          const u = (data && data.usage) || {}
           const windows = {}
           for (const k of ['rolling', 'weekly', 'monthly']) {
             const v = u[k]
             if (v && typeof v === 'object') windows[k] = { percent: v.percent, status: v.status, resetsAt: v.resetsAt }
           }
           if (!Object.keys(windows).length) return { error: 'empty usage payload' }
-          return { keys: [{ name: 'default', active: true, error: null, windows }] }
+          return { ok: true, keys: [{ name: 'default', active: true, error: null, windows }] }
         } catch (e) {
-          return { error: 'parse: ' + String(e && e.message || e) }
+          if (attempt === 0) continue
+          return { error: String((e && e.message) || e) }
         }
       }
-
-      // 有明确来源(yaml 池 / yaml 单 key):python 通道逐 key 抓取。
-      // key 列表 base64 传递,避免命令行转义;单个 key 失败不影响其他。
-      const keys = discoverGoKeys()
-      if (keys.length) {
-        const payload = utf8B64(JSON.stringify(keys))
-        const pyCmd = buildPythonCmd(QUOTA_PY_PAYLOAD, [['OCGO_KEYS_JSON', payload]])
-        const c2 = await shell.run(shell.resolve({ command: pyCmd, timeoutMs: 30000 }))
-        if (c2.exitCode === 0) {
-          const r = parsePy(stdoutText(c2.stdout))
-          if (r.keys) return r
-          return { error: r.error }
-        }
-        return { error: 'py 失败: ' + String(typeof c2.stderr === 'string' ? c2.stderr : (c2.stderr && c2.stderr.text != null ? c2.stderr.text : '')).slice(0, 200) }
-      }
-
-      // 回退(动态沙箱 / 无 yaml):curl native TLS 优先,python urllib 兜底(auth.json)。
-      // Windows 用 pwsh 读取,macOS/Linux 用 python3 一行读取 key。
-      const curlCmd = (plat === 'darwin' || plat === 'linux')
-        ? "PY=$(command -v python3 || command -v python || true); if [ -z \"$PY\" ]; then exit 1; fi; K=$(\"$PY\" -c 'import json,os;d=json.load(open(os.path.expanduser(\"~/.local/share/opencode/auth.json\")));print((d.get(\"opencode-go\") or {}).get(\"key\") or \"\")' 2>/dev/null); if [ -z \"$K\" ]; then exit 1; fi; curl -s -m 15 -H \"Authorization: Bearer $K\" https://opencode.ai/zen/go/v1/usage"
-        : '$k=(Get-Content "$env:USERPROFILE\\.local\\share\\opencode\\auth.json" -Raw|ConvertFrom-Json).\'opencode-go\'.key; if(-not $k){Write-Error "no-key";exit 1}; curl.exe -s -m 15 -H "Authorization: Bearer $k" https://opencode.ai/zen/go/v1/usage'
-      const c1 = await shell.run(shell.resolve({ command: curlCmd, timeoutMs: 20000 }))
-      let c1err = null
-      if (c1.exitCode === 0) {
-        const r = parseCurl(stdoutText(c1.stdout))
-        if (r.keys) return r
-        c1err = r.error
-      }
-      // 通道 2:python urllib 兜底(QUOTA_PY 本身跨平台,HOME 兼容)
-      const pyCmd = buildPythonCmd(QUOTA_PY_PAYLOAD, null)
-      const c2 = await shell.run(shell.resolve({ command: pyCmd, timeoutMs: 20000 }))
-      if (c2.exitCode === 0) {
-        const r = parsePy(stdoutText(c2.stdout))
-        if (r.keys) return r
-        return { error: 'curl 失败(' + (c1err ? c1err : 'exit=' + c1.exitCode) + '); py 解析失败: ' + r.error }
-      }
-      return { error: 'curl+py 均失败: ' + (c1err ? 'curl ' + c1err + '; ' : '') + String(c1.stderr || c2.stderr || '').slice(0, 200) }
+      return { error: 'quota query failed' }
     }
 
     // --- 聚合视图:今日/本月/累计、按模型、按天、最近会话 ---
@@ -661,21 +342,6 @@ return {
     // (每页 2 次请求 × 20s 超时,网络故障时会反复轰炸官网)。
     let officialErrAt = 0
 
-    // 跨平台 python 调用命令(bundle 模式按 process.platform 分支;动态沙箱无
-    // process → 走 Windows 写法,开发环境在 Windows)。envPairs: [['K','V'],...]
-    // 注意:Windows 的 -c 前导必须 `import base64, os`——此前只有 base64,
-    // 增量注入 os.environ['OCGO_LAST_TS'] 时直接 NameError,增量脚本从未成功
-    // 执行过(诊断日志:NameError: name 'os' is not defined)。
-    function buildPythonCmd(payload, envPairs) {
-      const plat = (typeof process !== 'undefined' && process.platform) || ''
-      if (plat === 'darwin' || plat === 'linux') {
-        // POSIX:环境变量用 shell export 注入(不需要 os.environ,也不拼进 -c)
-        const envPre = (envPairs || []).map((e) => "export " + e[0] + "='" + e[1] + "'; ").join('')
-        return "PY=$(command -v python3 || command -v python || true); if [ -z \"$PY\" ]; then echo python-not-found >&2; exit 1; fi; " + envPre + "\"$PY\" -c \"import base64;exec(base64.b64decode('" + payload + "'))\""
-      }
-      const envPart = (envPairs || []).map((e) => ";os.environ['" + e[0] + "']='" + e[1] + "'").join('')
-      return "$py='E:\\python\\python.exe';if(-not(Test-Path $py)){$c=Get-Command python -ErrorAction SilentlyContinue;if($c){$py=$c.Source}else{Write-Error 'python-not-found';exit 1}}; & $py -c \"import base64, os" + envPart + ";exec(base64.b64decode('" + payload + "'))\""
-    }
 
     // 磁盘记录的 ts 是 "MM/dd/yyyy HH:mm:ss"(美国格式):字符串 max 跨月/跨年
     // 会选错(如 "09/…" > "12/…"),导致 LAST 不是真正最新、增量停早丢新记录。
@@ -691,54 +357,181 @@ return {
       return best.raw
     }
 
-    // 用 ctx.subprocess(不受 ACL 受限令牌约束)直接跑 python —— 官方抓取必须走
-    // 这条路:受限 shell 里 python 写 ~/.config 会被 ACL 拒绝(写盘静默失败),
-    // 且 CDP 读 cookie 也在 python 内。subprocess 是 MCP/LSP 等 spawn 真实进
-    // 程的同一条通道,python 在这里拥有完整用户权限,可正常读 cookie + 写盘。
-    // payload: utf8B64 后的 python 脚本;envPairs: [[KEY,VALUE],...] 额外环境变量。
-    async function runPythonViaSubprocess(payload, envPairs) {
-      if (!subprocess || typeof subprocess.spawn !== 'function' || typeof subprocess.resolveExecutable !== 'function') {
-        // 无 subprocess 的部署回退 shell(宽松:老行为,可能仍写不了盘但能抓取)
-        const cmd = buildPythonCmd(payload, envPairs)
-        const spec = shell.resolve({ command: cmd, timeoutMs: 240000, stdoutMaxBytes: 64 * 1024 * 1024 })
-        const result = await shell.run(spec)
-        const stderrText = String(typeof result.stderr === 'string' ? result.stderr : (result.stderr && result.stderr.text != null ? result.stderr.text : '')).slice(0, 200)
-        if (result.exitCode !== 0) throw new Error(stderrText || '子进程退出码 ' + result.exitCode)
-        const raw0 = result.stdout
-        const text0 = typeof raw0 === 'string' ? raw0 : (raw0 && raw0.text != null ? String(raw0.text) : '')
-        return JSON.parse(text0)
-      }
-      // 定位 python 可执行(优先 python,失败回退 python3)
-      let pyExe = null
-      for (const cand of ['python', 'python3']) {
-        try { pyExe = await subprocess.resolveExecutable(cand); if (pyExe) break } catch (e) { pyExe = null }
-      }
-      if (!pyExe) throw new Error('python-not-found')
-      // 构建 python argv: python -c "import base64, os;exec(base64.b64decode('<payload>'))"
-      const pyCode = "import base64, os;exec(base64.b64decode('" + payload + "'))"
-      const env = (envPairs || []).reduce((acc, e) => { if (e && e[0]) acc[e[0]] = e[1] || ''; return acc }, {})
-      const handle = subprocess.spawn({
-        argv: [pyExe, '-c', pyCode],
-        cwd: (typeof _ocgoHomedir === 'function' && _ocgoHomedir()) || process.cwd(),
-        stdio: {
-          stdin: 'ignore',
-          stdout: { maxBytes: 64 * 1024 * 1024 },
-          stderr: { maxBytes: 64 * 1024 },
-        },
-        env,
-        graceMs: 5000,
-      })
-      const outcome = await handle.done
-      const collected = handle.collected || {}
-      const stdoutText = (collected.stdout && collected.stdout.readFrom(0).text) || ''
-      const stderrText = (collected.stderr && collected.stderr.readFrom(0).text) || ''
-      if (outcome.exitCode !== 0) throw new Error((stderrText || '子进程退出码 ' + outcome.exitCode).slice(0, 200))
-      return JSON.parse(stdoutText)
+    // 官方明细抓取 —— 纯 JS 实现(替代 python OFFICIAL_SCRIPT):
+    // 读配置拿 cookie/workspaceId → fetch _server 分页抓 usage.list → 正则解析 →
+    // 增量合并去重 → JS 落盘。不依赖 python。
+    const OCGO_FID = 'bfd684bfc2e4eed05cd0b518f5e4eafd3f3376e3938abb9e536e7c03df831e5c'
+    const OCGO_PAGE_SIZE = 50
+    const OCGO_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/143.0.0.0 Safari/537.36'
+    const OCGO_ABS_MAXP = 5000
+
+    function ocgoParseTs(ts) {
+      const s = String(ts || '').trim().replace(/Z$/, '').split('.')[0]
+      const d = new Date(s)
+      if (!Number.isNaN(d.getTime())) return d.getTime()
+      const m = String(ts || '').trim().match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})$/)
+      if (m) return new Date(+m[3], +m[1] - 1, +m[2], +m[4], +m[5], +m[6]).getTime()
+      return NaN
     }
 
-    // 运行官方抓取 python(envs: [['KEY','VALUE'],...] 注入环境变量)
+    // 从 _server 返回文本解析 {id:"usg_..."} 记录(与旧 python 正则一致)
+    function ocgoParseText(text) {
+      const page = []
+      const re = /\{id:"usg_[^}]*?\}/g
+      let b
+      while ((b = re.exec(text)) !== null) {
+        const block = b[0]
+        const tsM = block.match(/new Date\("([^"]+)"\)/)
+        const modelM = block.match(/model:"([^"]+)"/)
+        const costM = block.match(/cost:(\d+)/)
+        if (!(tsM && modelM && costM)) continue
+        const num = (p) => { const mm = block.match(p); return mm ? (parseInt(mm[1], 10) || 0) : 0 }
+        page.push({
+          ts: tsM[1], model: modelM[1],
+          ti: num(/inputTokens:(\d+)/), to: num(/outputTokens:(\d+)/),
+          rt: num(/reasoningTokens:(\d+)/), cr: num(/cacheReadTokens:(\d+)/),
+          cost: parseInt(costM[1], 10) || 0,
+        })
+      }
+      return page
+    }
+
+    async function ocgoFetchPage(wid, ck, page) {
+      const args = encodeURIComponent(JSON.stringify([wid, page]))
+      const url = 'https://opencode.ai/_server?id=' + OCGO_FID + '&args=' + args
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const res = await fetch(url, {
+            headers: {
+              'Cookie': 'auth=' + ck,
+              'X-Server-Id': OCGO_FID,
+              'X-Server-Instance': 'server-fn:ocgo-' + page,
+              'Origin': 'https://opencode.ai',
+              'Referer': 'https://opencode.ai/workspace/' + wid + '/usage',
+              'User-Agent': OCGO_UA,
+            },
+            signal: (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(20000) : undefined,
+          })
+          if (!res.ok) throw new Error('http ' + res.status)
+          return await res.text()
+        } catch (e) {
+          if (attempt === 1) return null
+          await new Promise((r) => setTimeout(r, 800))
+        }
+      }
+      return null
+    }
+
+    // envs: 空 = 全量; [['OCGO_LAST_TS', lastTs]] = 增量(只抓新记录)
     async function runOfficial(envs) {
-      return runPythonViaSubprocess(OFFICIAL_PAYLOAD, envs)
+      const out = { ok: false, error: null, records: [], truncated: false, skippedPages: 0, autoExtracted: false, browser: null }
+      const cfgPath = (typeof _ocgoJoin === 'function' && typeof _ocgoHomedir === 'function')
+        ? _ocgoJoin(_ocgoHomedir(), '.config', 'dsh-opencode-go-usage.json') : ''
+      const diskPath = (typeof _ocgoJoin === 'function' && typeof _ocgoHomedir === 'function')
+        ? _ocgoJoin(_ocgoHomedir(), '.config', 'dsh-opencode-go-usage-official.json') : ''
+      const canFs = typeof _ocgoReadFileSync === 'function' && typeof _ocgoExistsSync === 'function' && typeof _ocgoWriteFileSync === 'function' && typeof _ocgoMkdirSync === 'function'
+
+      let CK = '', WID = '', maxPages = OCGO_ABS_MAXP
+      if (canFs && cfgPath) {
+        try {
+          if (_ocgoExistsSync(cfgPath)) {
+            const cfg = JSON.parse(String(_ocgoReadFileSync(cfgPath, 'utf8') || '{}'))
+            CK = cfg.authCookie || ''; WID = cfg.workspaceId || ''
+            if (typeof cfg.maxPages === 'number') maxPages = Math.min(cfg.maxPages, OCGO_ABS_MAXP)
+          }
+        } catch (e) { ocgoLog('runOfficial read cfg: ' + String((e && e.message) || e)) }
+      }
+
+      const isIncremental = !!((envs || []).find((e) => e && e[0] === 'OCGO_LAST_TS'))
+      const LAST = isIncremental ? (((envs || []).find((e) => e && e[0] === 'OCGO_LAST_TS') || [])[1] || '') : ''
+
+      // 非增量 + 磁盘缓存 15 分钟内命中 → 直接返回
+      if (!isIncremental && canFs && diskPath && _ocgoExistsSync(diskPath)) {
+        try {
+          const d = JSON.parse(String(_ocgoReadFileSync(diskPath, 'utf8') || '{}'))
+          if (d && d.at && Array.isArray(d.records) && Date.now() - d.at < 15 * 60 * 1000) {
+            out.records = d.records; out.ok = true; out.diskCached = true; out.diskAt = d.at
+            out.truncated = !!d.truncated
+            return out
+          }
+        } catch (e) { /* 缓存读失败走全量 */ }
+      }
+
+      if (!CK || !WID) { out.error = 'NEED_CONFIG'; out.autoExtracted = false; return out }
+
+      // 分页抓取(12 并发,连续 5 空页结束)
+      let page = 0, skipped = 0, empty = 0, done = false
+      try {
+        while (page < maxPages && !done) {
+          const end = Math.min(page + 12, maxPages)
+          const batch = []
+          for (let p = page; p < end; p++) batch.push(p)
+          const results = await Promise.all(batch.map((p) => ocgoFetchPage(WID, CK, p).catch(() => null)))
+          for (let i = 0; i < batch.length; i++) {
+            const pg = batch[i]
+            const text = results[i]
+            if (text === null) {
+              empty++; skipped++
+              if (empty >= 5) { page = maxPages; done = true; break }
+              continue
+            }
+            let pgs = ocgoParseText(text)
+            if (!pgs.length) {
+              const retry = await ocgoFetchPage(WID, CK, pg)
+              pgs = retry ? ocgoParseText(retry) : []
+            }
+            if (!pgs.length) {
+              empty++
+              if (empty >= 5) { page = maxPages; done = true; break }
+              continue
+            }
+            empty = 0
+            if (LAST) {
+              const l = ocgoParseTs(LAST), p0 = ocgoParseTs(pgs[0].ts)
+              if (!Number.isNaN(l) && !Number.isNaN(p0)) {
+                out.records.push(...pgs.filter((r) => ocgoParseTs(r.ts) > l))
+                if (pgs.length < OCGO_PAGE_SIZE || ocgoParseTs(pgs[pgs.length - 1].ts) <= l) { page = maxPages; done = true; break }
+              } else {
+                out.records.push(...pgs.filter((r) => r.ts > LAST))
+                if (pgs.length < OCGO_PAGE_SIZE || pgs[pgs.length - 1].ts <= LAST) { page = maxPages; done = true; break }
+              }
+            } else {
+              out.records.push(...pgs)
+              if (pgs.length < OCGO_PAGE_SIZE) { page = maxPages; done = true; break }
+            }
+            page = pg + 1
+          }
+          await new Promise((r) => setTimeout(r, 150))
+        }
+        // 增量:与磁盘旧缓存合并去重
+        if (LAST && canFs && diskPath && _ocgoExistsSync(diskPath)) {
+          try {
+            const old = JSON.parse(String(_ocgoReadFileSync(diskPath, 'utf8') || '{}'))
+            if (old && Array.isArray(old.records)) {
+              const seen = new Set(), combined = []
+              for (const r of out.records.concat(old.records)) {
+                const k = [r.ts, r.model, r.cost, r.ti || 0, r.to || 0, r.rt || 0, r.cr || 0].join('|')
+                if (seen.has(k)) continue
+                seen.add(k); combined.push(r)
+              }
+              out.records = combined
+            }
+          } catch (e) { /* 合并失败用增量结果 */ }
+        }
+        // JS 落盘
+        if (canFs && diskPath) {
+          try {
+            _ocgoMkdirSync(_ocgoJoin(_ocgoHomedir(), '.config'), { recursive: true })
+            _ocgoWriteFileSync(diskPath, JSON.stringify({ at: Date.now(), records: out.records, truncated: out.records.length >= maxPages * OCGO_PAGE_SIZE }), 'utf8')
+          } catch (e) { ocgoLog('runOfficial write disk: ' + String((e && e.message) || e)) }
+        }
+        out.ok = true
+        out.truncated = out.records.length >= maxPages * OCGO_PAGE_SIZE
+        out.skippedPages = skipped
+      } catch (e) {
+        out.error = String((e && e.message) || e).slice(0, 200)
+      }
+      return out
     }
 
     // 最近一次 DSH 会话扫描结果(复用:官方拉取/增量完成后仅做内存回填,不重扫)
@@ -929,6 +722,8 @@ return {
       if (inflight) return inflight
       inflight = (async () => {
         const quotaP = collectQuota().catch(() => ({ error: 'quota 异常' }))
+        // quota 不阻塞首响应:最多等 3s,超时先用占位(quota:null),框架先渲染出来,
+        // 配额环形图后续由 60s 轮询补上。避免冷启动时 quota fetch 慢导致面板卡在 FAB 无法展开。
         // 数据实时性:内存缓存(本次会话已抓到的真实数据)直接展示,每次刷新
         // 增量抓最新页(1-3s);磁盘缓存**不再秒开旧数据**(用户要求:官方视图
         // 真实数据到位前显示"加载中",不拿可能过期的缓存顶)——磁盘缓存只作
@@ -976,7 +771,11 @@ return {
           refreshScanAsync()
         }
         const dshRaw = lastScan ? lastScan.rows : []
-        const quota = await quotaP
+        // quota 最多等 3s,超时用 null 占位(框架先出,数据后补)
+        const quota = await Promise.race([
+          quotaP,
+          new Promise((resolve) => setTimeout(() => resolve(null), 3000)),
+        ])
         const dshRows = backfillDsh(dshRaw, off && off.ok && off.rows ? off.rows : null)
         const dsh = buildView(dshRows)
         dsh.matchedOfficial = dshRows.matchedOfficial || 0
@@ -995,7 +794,7 @@ return {
             .slice(0, 8)
             .map((s) => ({ id: 's', title: s.title, cost_est: Math.round(s.cost * 10000) / 10000, updated: s.updated }))
         }
-        const data = { ok: true, fetchedAt: Date.now(), quota: quota.error ? null : quota, quotaError: quota.error || null, dsh, dshLoading: !(lastScan && lastScan.rows), official: off || officialErr || { ok: false, loading: true } }
+        const data = { ok: true, fetchedAt: Date.now(), quota: (quota && !quota.error) ? quota : null, quotaError: (quota && quota.error) || null, dsh, dshLoading: !(lastScan && lastScan.rows), official: off || officialErr || { ok: false, loading: true } }
         // 竞态兜底:后台抓取(增量/全量)可能早于本响应完成,其 sync 未命中
         // cache(当时 cache 还没赋值)——用最新 officialCache 覆盖 loading 占位,
         // 保证"数据到位后立即展示真实数据"而不是等到下一个轮询周期。
