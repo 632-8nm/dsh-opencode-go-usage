@@ -27,12 +27,13 @@ const HOST_URL = pathToFileURL(join(root, 'lib', 'index.js'))
 // ocgoLog 会把测试噪声写进真实 ~/.config 日志)。
 // ---------------------------------------------------------------------------
 const FAKE_HOME = mkdtempSync(join(tmpdir(), 'ocgo-test-home-'))
-const SAVED_HOME_ENV = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME, DSH_HOME: process.env.DSH_HOME }
+const SAVED_HOME_ENV = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME, DSH_HOME: process.env.DSH_HOME, OCGO_DISABLE_UPDATE: process.env.OCGO_DISABLE_UPDATE }
 const DISK_CACHE = join(FAKE_HOME, '.config', 'dsh-opencode-go-usage-official.json')
 test.before(() => {
   process.env.USERPROFILE = FAKE_HOME
   process.env.HOME = FAKE_HOME
   process.env.DSH_HOME = FAKE_HOME // 多 key 发现(yaml)也落在临时 HOME
+  process.env.OCGO_DISABLE_UPDATE = '1' // 更新检查不联网
 })
 test.after(() => {
   try {
@@ -42,6 +43,8 @@ test.after(() => {
     else process.env.HOME = SAVED_HOME_ENV.HOME
     if (SAVED_HOME_ENV.DSH_HOME === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = SAVED_HOME_ENV.DSH_HOME
+    if (SAVED_HOME_ENV.OCGO_DISABLE_UPDATE === undefined) delete process.env.OCGO_DISABLE_UPDATE
+    else process.env.OCGO_DISABLE_UPDATE = SAVED_HOME_ENV.OCGO_DISABLE_UPDATE
   } catch (e) { /* 还原失败仅记录 */ }
   rmSync(FAKE_HOME, { recursive: true, force: true })
 })
@@ -96,11 +99,15 @@ function makeHostEnv({ dynamic = true, sessions = [], officialResult = null, quo
   }
 
   const effects = []
+  const routeHandlers = new Map()
+  const webServer = {
+    register: (spec) => { if (spec && spec.path) routeHandlers.set(spec.path, spec.handler); return () => routeHandlers.delete(spec && spec.path) },
+  }
   const ctx = {
-    get: (name) => (name === 'shell' ? shell : name === 'sessionQuery' ? sessionQuery : undefined),
+    get: (name) => (name === 'shell' ? shell : name === 'sessionQuery' ? sessionQuery : name === 'webServer' ? webServer : undefined),
     effect: (fn) => { effects.push(fn); const d = fn(); return d },
   }
-  return { ctx, shellCalls, handlers, effects, fakeHarness }
+  return { ctx, shellCalls, handlers, effects, fakeHarness, routeHandlers }
 }
 
 function mkUsage(overrides = {}) {
@@ -544,6 +551,43 @@ test('扫描完成后官方 recent 自动补真实会话 id(缓存命中路径)'
     assert.equal(new Set(ids).size, ids.length, 'id 唯一')
     // 标题已回填
     assert.ok(recent.some((s) => s.title === '会话X' || s.title === '会话Y'), '标题应回填')
+  } finally {
+    Date.now = realNow
+  }
+})
+
+test('保存凭据后立即重试(重置失败冷却,不再白等 60s)', async () => {
+  const realNow = Date.now
+  let now = realNow()
+  Date.now = () => now
+  try {
+    const env = makeHostEnv({ dynamic: true, sessions: [], officialResult: { ok: false, error: 'NO_BROWSER' } })
+    const m = await import(HOST_URL)
+    m.apply(env.ctx)
+    const handle = env.handlers.get('ocgo-usage:fetch')
+    const officialRuns = () => env.shellCalls.filter((c) => c.includes('base64') && !c.includes('zen/go/v1/usage') && !c.includes('EncodedCommand') && !c.includes('OCGO_KEYS_JSON')).length
+
+    // 首次失败 → 60s 冷却启动
+    await handle(null)
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(officialRuns(), 1)
+
+    // 30s 后(冷却内):手动保存凭据(等价面板"保存并刷新")
+    now += 30_000
+    const cfgHandler = env.routeHandlers.get('/ocgo-usage/config')
+    assert.ok(cfgHandler, '应注册 /ocgo-usage/config 端点')
+    const body = JSON.stringify({ authCookie: 'Fe26.2-fake', workspaceId: 'wrk_fake' })
+    let cfgRes
+    const res = { writeHead: (c) => { cfgRes = c }, end: () => {} }
+    const req = { method: 'POST', [Symbol.asyncIterator]: async function * () { yield body } }
+    await cfgHandler(req, res)
+    assert.equal(cfgRes, 200, '保存应成功')
+
+    // 保存后立即 fetch:冷却应被重置 → 不再返回缓存错误,直接重试抓取
+    now += 5_000
+    await handle(null)
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(officialRuns(), 2, '保存凭据后应立即重试,不得受旧失败冷却约束')
   } finally {
     Date.now = realNow
   }

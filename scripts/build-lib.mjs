@@ -26,7 +26,13 @@ function stripWrapper(text) {
 }
 
 function buildHost() {
-  const text = stripWrapper(readFileSync(join(root, 'src/host.js'), 'utf8'))
+  const srcText = readFileSync(join(root, 'src/host.js'), 'utf8')
+  // 回归门禁:host.js 的 VERSION 常量必须与 package.json 同步(更新检查用)
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+  if (!srcText.includes("const VERSION = '" + pkg.version + "'")) {
+    throw new Error('src/host.js 的 VERSION 与 package.json 不同步(build-lib 回归门禁):请同步为 ' + pkg.version)
+  }
+  const text = stripWrapper(srcText)
   // 注入 Node 内置模块(bundle 形态可用;动态沙箱无这些符号,apply 内必须用
   // typeof 守卫后再访问,否则动态模式会 ReferenceError)。
   const imports = [

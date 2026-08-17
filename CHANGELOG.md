@@ -2,6 +2,16 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.25] - 2026-08-16
+
+### 功能(更新检查 + 保存后立即重试)
+- **更新检查提示**:启动后异步读 raw GitHub 的 `package.json` 比对版本,有新版时面板 foot 显示"发现新版本 vX(当前 vY)——git pull 后重启 DSH"提示条;6 小时节流、8s 超时、网络失败静默;`build-lib` 新增回归门禁(host 的 `VERSION` 常量必须与 `package.json` 同步)
+- **保存凭据后立即重试**(修复"保存后很慢"的真实原因之一):此前 NO_BROWSER 等失败留下的 **60s 失败冷却** + **45s 聚合缓存**会让保存后白等一轮(实测保存→开始抓取隔 60s+,总耗时 1.5-2 分钟);现在保存配置同时清空 `officialCache`/`cache` 并重置 `officialErrAt`——保存后 reload 立即开始抓取
+- 首次全量耗时说明修正:README 由"10-15s"改为"15-60s,视网络与数据量"(13k+ 条 ≈ 280 页,12 并发下真实耗时与网络强相关)
+
+### 测试
+- 新增用例:保存凭据后 5s 内立即重试(冷却 + 聚合缓存双重置);webServer 路由 mock;测试隔离增加 `OCGO_DISABLE_UPDATE`;套件 21 → 22
+
 ## [1.6.24] - 2026-08-16
 
 ### 修复(首次打开时"最近会话"无标题的中间态)
