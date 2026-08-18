@@ -77,6 +77,7 @@ return {
         'foot.est': '金额: 官方 cost + 定价估算',
         'foot.upd': '更新 {t}',
         'foot.int': '60s 自动刷新',
+        'foot.stale': '正在刷新最新数据…',
         'foot.recon': '官方窗口 {o} · 本地明细 {l}',
         'foot.reconTitle': '官方配额按用量单位计(部分模型限时 2×,×$60 仅是参考换算);本地为 usage.list 逐请求美元明细——两口径不可直接对比,差 {d}',
         'load': '加载中…',
@@ -159,6 +160,7 @@ return {
         'foot.est': 'Cost: official + estimated',
         'foot.upd': 'Updated {t}',
         'foot.int': 'Auto-refresh 60s',
+        'foot.stale': 'Refreshing latest data…',
         'foot.recon': 'Official window {o} · Local detail {l}',
         'foot.reconTitle': 'Official quota is metered in usage units (some models count 2x; ×$60 is only a reference conversion); local is per-request USD from usage.list — different bases, not directly comparable, diff {d}',
         'load': 'Loading…',
@@ -535,7 +537,7 @@ return {
         }
         if (open || !state.data) load()
         // 始终 60s 轮询(面板打开或仅 FAB 都刷新):v1.6.15 起会话扫描后台化、
-        // 官方增量轻量(1-3s)、配额 curl 秒级——关闭状态 60s 一次的开销可控,
+        // 官方增量轻量(1-3s)、配额单请求秒级——关闭状态 60s 一次的开销可控,
         // FAB 的金额/配额百分比因此保持实时(此前仅面板打开时轮询)。
         // 15s fast-poll 仍只在面板打开且官方未就绪时启用。
         let disposer = null
@@ -961,7 +963,8 @@ return {
             ? t('foot.src.dsh') + (vd.matchedOfficial ? ' · ' + t('foot.matched', { n: vd.matchedOfficial }) : '') + ' · ' + t('foot.est')
             : t('foot.official', { t: stamp ? fmtTime(stamp) : '—' }) + (official && official.truncated ? ' · ' + t('foot.officialTrunc') : '')),
           React.createElement('span', { key: 'upd' }, t('foot.upd', { t: stamp ? fmtTime(stamp) : '—' })),
-          React.createElement('span', { key: 'int' }, t('foot.int'))
+          React.createElement('span', { key: 'int' }, t('foot.int')),
+          d && d.stale ? React.createElement('span', { key: 'stale', className: 'ocgo-src miss' }, t('foot.stale')) : null
         ].filter(Boolean)
         // 官方配额 vs 本地明细:仅信息展示,不再判对错——
         // 配额接口的 percent 按"用量单位"计(部分模型限时 2×,实测 monthly

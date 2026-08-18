@@ -1,16 +1,12 @@
 // OpenCode Go 用量面板 — Host 半区
 //
-// 用法:把本文件内容作为 cordis_define 的 code.host 传入(函数体),
-// 或按 bundle 插件方式安装(见 README)。
-//
-// 数据管道:
+// 数据管道(纯 JS,无 python/curl/shell 依赖):
 //   1. DSH 会话事件  (assistant/message 携带真实 token usage + 模型/provider)
-//   2. opencode 官方库 (part 表 step-finish 逐请求记录,含官方 cost)
-//   3. codex 代理日志 (cc-switch proxy_request_logs,Go key 流量)
-//   4. 官方配额接口 (opencode.ai/zen/go/v1/usage,curl + python 双通道)
+//   2. 官方配额  (fetch opencode.ai/zen/go/v1/usage,auth.json 的 opencode-go key)
+//   3. 官方明细  (fetch opencode.ai/_server usage.list,凭据手动粘贴一次后自动读取)
 //
-// 安全:API key 只在 python/curl 子进程内从 auth.json 读取,不进命令日志、不落盘。
-// 弹性:数据源缺失自动降级(OPENCODE_DATA 优先,各源独立可用性检测)。
+// 安全:API key 只在进程内从 auth.json 读取,不进命令日志、不落盘。
+// 展示结果持久化为 -snapshot.json,重启首屏秒开,后台异步刷新最新。
 return {
   apply(ctx, config) {
     const sq = ctx.get('sessionQuery')
@@ -322,12 +318,36 @@ return {
         return JSON.parse(_ocgoReadFileSync(p, 'utf8'))
       } catch (e) { return null }
     }
+    // 原子写 JSON:先写临时文件再 rename,避免进程中途被杀导致文件写一半损坏。
+    function atomicJsonWrite(path, data) {
+      if (!path || typeof _ocgoWriteFileSync !== 'function') return
+      const tmp = path + '.tmp-' + Date.now()
+      try {
+        _ocgoWriteFileSync(tmp, JSON.stringify(data), 'utf8')
+        if (typeof _ocgoRenameSync !== 'function') {
+          // 无 rename 注入则退化为直接覆盖(仍比写一半好,但非原子)
+          _ocgoWriteFileSync(path, JSON.stringify(data), 'utf8')
+          try { if (typeof _ocgoUnlinkSync === 'function') _ocgoUnlinkSync(tmp) } catch (e) {}
+        } else {
+          _ocgoRenameSync(tmp, path)
+        }
+      } catch (e) {
+        try { if (typeof _ocgoUnlinkSync === 'function' && _ocgoExistsSync(tmp)) _ocgoUnlinkSync(tmp) } catch (e2) {}
+      }
+    }
     function writeSnapshot(data) {
       const p = snapshotPath()
-      if (!p || typeof _ocgoWriteFileSync !== 'function' || typeof _ocgoMkdirSync !== 'function') return
+      if (!p || typeof _ocgoMkdirSync !== 'function') return
       try {
         _ocgoMkdirSync(_ocgoJoin(_ocgoHomedir(), '.config'), { recursive: true })
-        _ocgoWriteFileSync(p, JSON.stringify(data), 'utf8')
+        // 瘦身:不落盘 official.rows(原始单条,体积大且展示用不到),只存聚合 vd。
+        // 原始行已由 -official.json 单独持久化,首屏/增量都不依赖快照里的 rows。
+        const slim = { ...data }
+        if (slim.official && slim.official.rows) {
+          slim.official = { ...slim.official }
+          delete slim.official.rows
+        }
+        atomicJsonWrite(p, slim)
       } catch (e) { /* 快照写失败静默 */ }
     }
     function toOfficialData(parsed) {
@@ -379,9 +399,8 @@ return {
       return best.raw
     }
 
-    // 官方明细抓取 —— 纯 JS 实现(替代 python OFFICIAL_SCRIPT):
-    // 读配置拿 cookie/workspaceId → fetch _server 分页抓 usage.list → 正则解析 →
-    // 增量合并去重 → JS 落盘。不依赖 python。
+    // 官方明细抓取:读配置拿 cookie/workspaceId → fetch _server 分页抓 usage.list →
+    // 正则解析 → 增量合并去重 → JS 落盘。
     const OCGO_FID = 'bfd684bfc2e4eed05cd0b518f5e4eafd3f3376e3938abb9e536e7c03df831e5c'
     const OCGO_PAGE_SIZE = 50
     const OCGO_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/143.0.0.0 Safari/537.36'
@@ -396,7 +415,7 @@ return {
       return NaN
     }
 
-    // 从 _server 返回文本解析 {id:"usg_..."} 记录(与旧 python 正则一致)
+    // 从 _server 返回文本解析 {id:"usg_..."} 记录
     function ocgoParseText(text) {
       const page = []
       const re = /\{id:"usg_[^}]*?\}/g
@@ -540,11 +559,11 @@ return {
             }
           } catch (e) { /* 合并失败用增量结果 */ }
         }
-        // JS 落盘
+        // JS 落盘(原子写,避免写一半损坏)
         if (canFs && diskPath) {
           try {
             _ocgoMkdirSync(_ocgoJoin(_ocgoHomedir(), '.config'), { recursive: true })
-            _ocgoWriteFileSync(diskPath, JSON.stringify({ at: Date.now(), records: out.records, truncated: out.records.length >= maxPages * OCGO_PAGE_SIZE }), 'utf8')
+            atomicJsonWrite(diskPath, { at: Date.now(), records: out.records, truncated: out.records.length >= maxPages * OCGO_PAGE_SIZE })
           } catch (e) { ocgoLog('runOfficial write disk: ' + String((e && e.message) || e)) }
         }
         out.ok = true
@@ -609,8 +628,7 @@ return {
           if (!p || !p.ok) {
             ocgoLog('collectOfficial not ok: ' + ((p && p.error) || 'no data'))
             officialErrAt = Date.now()
-            // 无配置/无凭据 → 直接提示用户在面板粘贴一次凭据(已去除 CDP 自动提取,
-            // 浏览器调试端口在 Windows 常因残留进程被 merge 忽略,自动提取不可靠)。
+            // 无凭据 → 提示用户在面板粘贴一次凭据
             const code = (p && p.error) || 'unknown'
             officialCache = { at: Date.now(), data: { ok: false, error: code === 'NEED_CONFIG' ? 'NEED_CONFIG' : code } }
             return officialCache.data
@@ -635,11 +653,8 @@ return {
       }
     }
 
-    // 已去除 CDP 自动提取:浏览器调试端口在 Windows 常因残留进程被 merge 忽略,
-    // 自动提取不可靠。官方明细改为"面板手动粘贴一次凭据"后自动读取。
-
     // 增量刷新:磁盘缓存过期时只抓新增页(日常仅 1-3 页,秒级完成);
-    // python 端读旧盘合并去重后写回,host 同步更新内存缓存。
+    // 读旧盘合并去重后写回,host 同步更新内存缓存。
     let incrementalInflight = null
     // 增量修复路径的节流:截断缓存强制全量重建 12h 一次;磁盘缓存缺失回退
     // 全量 15min 一次——避免每轮 60s 轮询都重抓(数据真的超过上限时也不轰炸)。
@@ -692,7 +707,7 @@ return {
         if (typeof _ocgoWriteFileSync !== 'function') return { ok: false, error: 'bundle-only' }
         const cfgPath = _ocgoJoin(_ocgoHomedir(), '.config', 'dsh-opencode-go-usage.json')
         _ocgoMkdirSync(_ocgoJoin(_ocgoHomedir(), '.config'), { recursive: true })
-        _ocgoWriteFileSync(cfgPath, JSON.stringify(payload, null, 1), 'utf8')
+        atomicJsonWrite(cfgPath, payload)
         officialCache = null // 清官方缓存,下次拉取使用新配置
         cache = null        // 清 45s 聚合缓存,否则保存后 reload 命中旧结果(闪烁报错)
         officialErrAt = 0   // 重置失败冷却,保存后立即重试抓取,不再白等 60s
@@ -734,29 +749,37 @@ return {
       return scanInflight
     }
 
-    // 后台刷新:清内存 cache 后再跑一次 fetchAll,强制重新抓取/计算,结果写回快照。
+    // 后台刷新:清内存 cache 后强制走完整抓取(跳过快照秒开),结果写回新快照。
     let bgRefreshInflight = null
     async function refreshAllInBackground() {
       if (bgRefreshInflight) return bgRefreshInflight
       bgRefreshInflight = (async () => {
         cache = null
-        await fetchAll().catch((e) => { ocgoLog('bg refresh: ' + String((e && e.message) || e)) })
+        try {
+          await fetchAll(true)
+        } catch (e) {
+          // 刷新失败留痕:日志 + 内存 cache 标记,供前端提示"数据可能过期"
+          ocgoLog('bg refresh failed: ' + String((e && e.message) || e))
+          if (cache && cache.data) cache.data.refreshError = String((e && e.message) || e)
+        }
       })().finally(() => { bgRefreshInflight = null })
       return bgRefreshInflight
     }
 
-    async function fetchAll() {
+    async function fetchAll(forceRefresh) {
       // 若 officialCache 已定论(NEED_CONFIG 需手动粘贴 / 抓取成功),不要复用
       // 45s 缓存里可能存的"旧 loading 占位"——否则前端会一直转"加载中"直到
       // 缓存过期。定论后应重建响应,让前端尽快显示表单或数据。
       const officialSettled = !!(officialCache && officialCache.data
         && (officialCache.data.ok || officialCache.data.error === 'NEED_CONFIG'))
-      if (cache && !officialSettled && Date.now() - cache.at < 45000) return cache.data
+      if (cache && !forceRefresh && !officialSettled && Date.now() - cache.at < 45000) return cache.data
       // 快照秒开:内存 cache 不可用时,读上次持久化的展示快照直接返回(能展开、
       // 有完整聚合数据),同时后台刷新最新到内存+快照,不阻塞首响应。
-      if (!cache) {
+      if (!cache && !forceRefresh) {
         const snap = readSnapshot()
         if (snap && snap.ok && snap.quota && snap.official && snap.official.ok && snap.official.vd) {
+          // 标注旧数据(stale),前端可据此显示"数据来自上次,正在刷新"
+          snap.stale = true
           cache = { at: Date.now(), data: snap }
           // 后台异步刷新(绕过本函数同步路径),完成后写新快照 + 更新 cache
           setTimeout(() => { refreshAllInBackground() }, 0)
@@ -774,8 +797,7 @@ return {
         // collectOfficial 内部按 60s 冷却去重,避免 fast-poll 期间反复全量
         // 重试;错误原样透传给面板展示。
         // 最快路径:直接读配置文件判断有无凭据。无凭据 → 本次响应直接返回
-        // NEED_CONFIG,不起 python、不等后台抓取,前端第一次就显示粘贴表单,
-        // 不再先"加载中"卡一会儿。
+        // NEED_CONFIG,不等后台抓取,前端第一次就显示粘贴表单。
         let noCred = false
         if (typeof _ocgoReadFileSync === 'function' && typeof _ocgoExistsSync === 'function'
           && typeof _ocgoJoin === 'function' && typeof _ocgoHomedir === 'function' && !officialCache) {
