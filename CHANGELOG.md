@@ -2,6 +2,28 @@
 
 本项目的所有显著变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/),版本遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 重构(纯 JS,去 CDP/浏览器自动化)
+- **彻底去 Python/curl/shell 依赖**:官方明细(usage.list)与配额(zen/go/v1/usage)抓取全部改为纯 JS(fetch + 本地 fs 写入);删除 CDP 自动提取与一键启动调试浏览器(`scripts/verify-cdp.mjs`、`scripts/start-browser-debug.bat`、`/ocgo-usage/launch-browser` 端点与客户端残留的按钮/函数/i18n 键)
+- **凭据只接受手动粘贴**:F12 复制 authCookie + workspaceId 保存一次(`~/.config/dsh-opencode-go-usage.json`);启动时先检测凭据,缺失立即引导粘贴,不发起任何抓取
+
+### 功能(秒开 + 持久化)
+- **保存凭据后作废旧快照**:保存 authCookie/workspaceId 时删除磁盘快照,reload 直接走网络构建显示「加载中」,不再被保存前写入的旧 NEED_CONFIG 快照顶成凭据引导
+- **配额后台抓取**:首次使用/重启无缓存时,首响应毫秒级返回(界面立即展开、立即显示凭据引导),配额到位后由 60s 轮询更新;FAB 配额% 未到位前显示 —;配额随展示快照持久化(重启后首屏即见上次配额)
+- **展示快照持久化**(`-snapshot.json`):重启后首屏直接渲染上次快照(配额 + 官方明细 + DSH 扫描),后台异步刷新真实数据,期间标注「正在刷新最新数据…」,真实数据到位后无缝替换
+- **快照命中恢复配额缓存**:快照配额同步回内存缓存,后台刷新(fetchAll(true))不会把秒显的配额覆写成 null(修复"配额闪一下又消失")
+- **官方空结果不再当成功**:全量抓取 0 条(如 cookie 失效返回登录页)返回明确错误并写诊断日志,不再静默显示全 0;错误不落盘,避免空缓存毒化增量基准
+- **DSH 扫描持久化**(`-dshscan.json`):重启后 DSH 视图不重扫,恢复上次扫描结果并后台增量刷新
+- **八向窗口缩放**:四边/四角拖拽调整,边界自动收敛并预留滚动条;去掉反向拉伸
+- **最近会话修复**:切换官方/DSH 视图不再重复、标题不再丢失;列表按会话 id 稳定 key
+
+### 诊断
+- 增强日志:插件加载/配额成功失败+百分比/快照命中/后台刷新起止/DSH 扫描行数/凭据保存等全部记录到 `~/.config/dsh-opencode-go-usage.log`
+
+### 测试
+- 测试套件重写为适配纯 JS 架构(mock global fetch,零外部依赖):删除 python/shell/CDP 相关断言,新增源码级断言(关键新符号在、已删符号不在),16 个用例全绿
+
 ## [1.6.21] - 2026-08-16
 
 ### 功能(多 key 效果立即可见)
