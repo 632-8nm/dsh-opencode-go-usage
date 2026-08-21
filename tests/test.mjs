@@ -405,6 +405,32 @@ test('手动凭据:POST /ocgo-usage/config 写配置并返回 ok', async () => {
   assert.ok(after.official.loading || after.official.ok, '保存后应为加载中或已就绪')
 })
 
+test('官方 recent:扫描未就绪置空列表,扫描完成重建标题(不显示无标题)', async () => {
+  cleanState()
+  writeGoKey()
+  writeCfg({ authCookie: 'Fe26.2-c', workspaceId: 'wrk_w' })
+  const rec = '{id:"usg_1",model:"deepseek-v4-flash",ts:new Date("2026-08-16T08:00:00.000Z"),inputTokens:100,outputTokens:50,cost:123}'
+  const { stub } = makeFetchStub({ officialText: rec })
+  globalThis.fetch = stub
+  const sessions = [{ id: 's1', title: '我的会话', events: [mkAssistantEvent('deepseek-v4-flash', 'opencode-go', mkUsage({ inputTokens: 100 }))] }]
+  const env = makeHostEnv({ dynamic: true, sessions, scanDelay: 500 }) // 扫描慢:官方先就绪
+  const m = await freshHost()
+  m.apply(env.ctx)
+  const handle = env.handlers.get('ocgo-usage:fetch')
+  await handle(null) // 首次:官方加载中,扫描后台进行
+  await sleep(400) // 官方落定,扫描仍进行(500ms 延迟)
+  const d = await handle(null)
+  if (d.dshLoading && d.official && d.official.ok && d.official.vd) {
+    assert.ok(Array.isArray(d.official.vd.recent) && d.official.vd.recent.length === 0,
+      '扫描未就绪时官方 recent 应置空(不显示一片"无标题")')
+  }
+  await sleep(500) // 扫描完成
+  const d2 = await handle(null) // 缓存命中同对象,但扫描完成回调已重建 recent
+  if (d2.official && d2.official.ok && d2.official.vd && d2.official.vd.recent && d2.official.vd.recent.length) {
+    assert.equal(d2.official.vd.recent[0].title, '我的会话', '扫描完成后官方 recent 应补上真实标题')
+  }
+})
+
 // ---------------------------------------------------------------------------
 // 6. 展示快照:-snapshot.json 写入且剔除 official.rows(瘦身)
 // ---------------------------------------------------------------------------
