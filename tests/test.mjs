@@ -308,6 +308,50 @@ test('官方:空响应(如 cookie 失效)不当作成功,返回明确错误且�
   assert.ok(log.includes('official fetch empty'), '日志应记录空响应诊断(含响应样本)')
 })
 
+test('强制刷新:force 请求绕过 45s 缓存重建数据', async () => {
+  cleanState()
+  writeGoKey()
+  const { stub, calls } = makeFetchStub()
+  globalThis.fetch = stub
+  const env = makeHostEnv({ dynamic: true, sessions: [] })
+  const m = await freshHost()
+  m.apply(env.ctx)
+  const handle = env.handlers.get('ocgo-usage:fetch')
+
+  const d0 = await handle(null) // 首次构建
+  const quotaCalls1 = calls.quota
+  await sleep(20)
+  const d1 = await handle(null) // 无 force → 45s 缓存命中
+  assert.equal(d1, d0, '非 force 请求应命中 45s 缓存返回同一对象')
+  const d2 = await handle({ force: true }) // force → 重建
+  assert.notEqual(d2, d0, 'force 请求应绕过缓存重建新对象')
+  assert.ok(calls.quota >= quotaCalls1 + 1, 'force 应重新抓配额')
+})
+
+test('配额兜底:配额缓存空时任何构建(含后台抢占)都带快照配额,不空白', async () => {
+  cleanState()
+  writeGoKey()
+  writeCfg({ authCookie: 'Fe26.2-c', workspaceId: 'wrk_w' })
+  const rec = '{id:"usg_1",model:"deepseek-v4-flash",ts:new Date("2026-08-16T08:00:00.000Z"),inputTokens:100,outputTokens:50,cost:123}'
+  const { stub } = makeFetchStub({ officialText: rec })
+  globalThis.fetch = stub
+  const env = makeHostEnv({ dynamic: true, sessions: [] })
+  const m = await freshHost()
+  m.apply(env.ctx)
+  const handle = env.handlers.get('ocgo-usage:fetch')
+
+  await handle(null)
+  await sleep(300) // 官方落定 + 快照写入(含配额)
+  // 模拟"重启后"(新模块实例 = 全新内存状态,quotaCache 为空):force 构建
+  // (等同 bgRefresh 抢占)仍应带快照配额,不空白
+  const env2 = makeHostEnv({ dynamic: true, sessions: [] })
+  const m2 = await freshHost()
+  m2.apply(env2.ctx)
+  const handle2 = env2.handlers.get('ocgo-usage:fetch')
+  const d = await handle2({ force: true })
+  assert.ok(d.quota && d.quota.keys, 'force 构建(配额缓存空)也应有快照配额打底')
+})
+
 // ---------------------------------------------------------------------------
 // 5. 手动凭据保存端点(/ocgo-usage/config)
 // ---------------------------------------------------------------------------

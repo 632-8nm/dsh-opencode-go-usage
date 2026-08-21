@@ -85,7 +85,7 @@ return {
         'fab.week': ' · 周 {p}%',
         'fab.month': ' · 月 {p}%',
         'fab.hint': ' (拖动移动,点击打开)',
-        'btn.refresh': '刷新',
+        'btn.refresh': '强制刷新(重抓最新数据)',
         'btn.max': '最大化',
         'btn.restore': '还原',
         'btn.close': '关闭',
@@ -169,7 +169,7 @@ return {
         'fab.week': ' · Wk {p}%',
         'fab.month': ' · Mo {p}%',
         'fab.hint': ' (drag to move, click to open)',
-        'btn.refresh': 'Refresh',
+        'btn.refresh': 'Force refresh (re-fetch latest)',
         'btn.max': 'Maximize',
         'btn.restore': 'Restore',
         'btn.close': 'Close',
@@ -446,6 +446,8 @@ return {
       const [cfgWid, setCfgWid] = React.useState('')
       const [cfgSaving, setCfgSaving] = React.useState(false)
       const [cfgMsg, setCfgMsg] = React.useState(null)
+      // 手动刷新的 force 标记:一次性消费,传递给下一次 load() 请求
+      const forceRef = React.useRef(false)
       // 多 key 池:手动选中的 key 名(null = 自动:ACTIVE 优先,否则第一个)
       const [qKey, setQKey] = React.useState(null)
       // 语言:本地记忆优先,否则跟随 DSH 全局 locale(未手动选择时订阅其变化)
@@ -493,12 +495,15 @@ return {
           inFlight = true
           try {
             let r
+            // 一次性 force 标记:手动刷新时置位,本次请求强制 host 重抓
+            const force = forceRef.current
+            forceRef.current = false
             // 动态模式走 host.call(harness 桥);bundle 模式走 webServer 本地路由。
             const fetchP = (async () => {
               if (typeof host !== 'undefined' && host && typeof host.call === 'function') {
-                return host.call('ocgo-usage:fetch')
+                return host.call('ocgo-usage:fetch', force ? { force: true } : undefined)
               }
-              const res = await fetch('/ocgo-usage/fetch')
+              const res = await fetch('/ocgo-usage/fetch', force ? { headers: { 'X-OCGO-FORCE': '1' } } : undefined)
               if (!res.ok) throw new Error(t('err.local', { s: res.status }))
               return res.json()
             })()
@@ -552,7 +557,7 @@ return {
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [tick, open])
 
-      function reload() { setState({ loading: true, data: null, error: null }); setTick((t) => t + 1) }
+      function reload(force) { forceRef.current = !!force; setState({ loading: true, data: null, error: null }); setTick((t) => t + 1) }
 
       // 手动保存官方凭据(bundle 模式走 host 的 /ocgo-usage/config 端点)
       async function saveCfg() {
@@ -818,32 +823,6 @@ return {
           ),
           React.createElement('span', { className: 'ocgo-spacer' })
         ))
-        // 官方明细状态横幅(不阻塞主体:配额始终显示)
-        if (view !== 'dsh' && official) {
-          if (official.loading) {
-            body.push(React.createElement('div', { key: 'of-status', className: 'ocgo-src miss' }, t('official.loading')))
-          } else if (!official.ok) {
-            const ec = official.error
-            const friendly = (ec === 'NO_BROWSER' || ec === 'NEED_CONFIG') ? t('official.errNoBrowser')
-              : ec === 'WS_PARSE_FAIL' ? t('official.errWs')
-              : t('official.err', { e: official.error || 'unknown' })
-            const inputStyle = { flex: 1, minWidth: 0, background: 'var(--dsw-alias-bg-layer-2)', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 6, padding: '4px 6px', color: 'var(--dsw-alias-label-primary)', fontSize: 11 }
-            body.push(React.createElement('div', { key: 'of-status', className: 'ocgo-err' },
-              React.createElement('div', null, friendly),
-              React.createElement('div', { style: { fontSize: 11, whiteSpace: 'pre-line', opacity: .9, marginTop: 4, lineHeight: 1.6 } }, t('official.howto')),
-              React.createElement('div', { style: { fontSize: 10, opacity: .8, marginTop: 2 } }, '~/.config/dsh-opencode-go-usage.json'),
-              React.createElement('div', { className: 'ocgo-viewrow', style: { marginTop: 4 } },
-                React.createElement('input', { value: cfgAuth, onChange: (e) => setCfgAuth(e.target.value), placeholder: t('official.cookiePh'), style: inputStyle })
-              ),
-              React.createElement('div', { className: 'ocgo-viewrow' },
-                React.createElement('input', { value: cfgWid, onChange: (e) => setCfgWid(e.target.value), placeholder: t('official.widPh'), style: inputStyle })
-              ),
-              React.createElement('div', { className: 'ocgo-viewrow' },
-                React.createElement('button', { className: 'ocgo-seg-btn', onClick: saveCfg, disabled: cfgSaving, style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 6, color: 'var(--dsw-alias-label-primary)' } }, cfgSaving ? t('official.saved') : t('official.save'))
-              )
-            ))
-          }
-        }
         // DSH 扫描状态横幅:未就绪时提示,不显示 0 数据
         if (view === 'dsh' && dshLoading) {
           body.push(React.createElement('div', { key: 'dsh-status', className: 'ocgo-src miss' }, t('dsh.loading')))
@@ -888,6 +867,32 @@ return {
           if (hot.length) {
             body.push(React.createElement('div', { key: 'warn-banner', className: 'ocgo-err' },
               React.createElement('div', null, t('warn.banner', { s: hot.map((h) => labels[h.k] + ' ' + Math.round(h.p) + '%').join(' · ') }))
+            ))
+          }
+        }
+        // 官方明细状态区(置于配额下方):加载中横幅 / 无凭据引导表单(报错+输入框)
+        if (view !== 'dsh' && official) {
+          if (official.loading) {
+            body.push(React.createElement('div', { key: 'of-status', className: 'ocgo-src miss' }, t('official.loading')))
+          } else if (!official.ok) {
+            const ec = official.error
+            const friendly = (ec === 'NO_BROWSER' || ec === 'NEED_CONFIG') ? t('official.errNoBrowser')
+              : ec === 'WS_PARSE_FAIL' ? t('official.errWs')
+              : t('official.err', { e: official.error || 'unknown' })
+            const inputStyle = { flex: 1, minWidth: 0, background: 'var(--dsw-alias-bg-layer-2)', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 6, padding: '4px 6px', color: 'var(--dsw-alias-label-primary)', fontSize: 11 }
+            body.push(React.createElement('div', { key: 'of-status', className: 'ocgo-err' },
+              React.createElement('div', null, friendly),
+              React.createElement('div', { style: { fontSize: 11, whiteSpace: 'pre-line', opacity: .9, marginTop: 4, lineHeight: 1.6 } }, t('official.howto')),
+              React.createElement('div', { style: { fontSize: 10, opacity: .8, marginTop: 2 } }, '~/.config/dsh-opencode-go-usage.json'),
+              React.createElement('div', { className: 'ocgo-viewrow', style: { marginTop: 4 } },
+                React.createElement('input', { value: cfgAuth, onChange: (e) => setCfgAuth(e.target.value), placeholder: t('official.cookiePh'), style: inputStyle })
+              ),
+              React.createElement('div', { className: 'ocgo-viewrow' },
+                React.createElement('input', { value: cfgWid, onChange: (e) => setCfgWid(e.target.value), placeholder: t('official.widPh'), style: inputStyle })
+              ),
+              React.createElement('div', { className: 'ocgo-viewrow' },
+                React.createElement('button', { className: 'ocgo-seg-btn', onClick: saveCfg, disabled: cfgSaving, style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 6, color: 'var(--dsw-alias-label-primary)' } }, cfgSaving ? t('official.saved') : t('official.save'))
+              )
             ))
           }
         }
@@ -1006,12 +1011,12 @@ return {
       }
 
       return React.createElement('div', { className: 'ocgo-panel' + (maximized ? ' ocgo-max' : ''), style: panelStyle },
-        React.createElement('div', { className: 'ocgo-titlebar', onMouseDown: onTitleDown, onDoubleClick: toggleMax },
+        React.createElement('div', { className: 'ocgo-titlebar', onMouseDown: onTitleDown },
           React.createElement('span', { className: 'ocgo-title' }, t('title')),
           React.createElement('span', { className: 'ocgo-spacer' }),
           React.createElement('button', { className: 'ocgo-ibtn', onClick: toggleLang, title: t('lang.switch') + ' (' + (lang === 'zh' ? '中文' : 'English') + ')' }, React.createElement(Icon, { name: 'lang' })),
           React.createElement('button', { className: 'ocgo-ibtn', onClick: exportCsv, title: t('btn.exportTitle') }, React.createElement(Icon, { name: 'export' })),
-          React.createElement('button', { className: 'ocgo-ibtn', onClick: reload, title: t('btn.refresh') }, React.createElement(Icon, { name: 'refresh' })),
+          React.createElement('button', { className: 'ocgo-ibtn', onClick: () => reload(true), title: t('btn.refresh') }, React.createElement(Icon, { name: 'refresh' })),
           React.createElement('button', { className: 'ocgo-ibtn', onClick: toggleMax, title: maximized ? t('btn.restore') : t('btn.max') }, React.createElement(Icon, { name: maximized ? 'restore' : 'max' })),
           React.createElement('button', { className: 'ocgo-ibtn', onClick: () => setOpen(false), title: t('btn.close') }, React.createElement(Icon, { name: 'close' }))
         ),

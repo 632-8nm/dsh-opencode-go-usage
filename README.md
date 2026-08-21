@@ -7,7 +7,7 @@
   <a href="https://github.com/Xenia0922/dsh-opencode-go-usage"><img src="https://img.shields.io/badge/version-v1.6.21-22c3a6" alt="最新版本" /></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-2a3558" alt="平台" />
   <img src="https://img.shields.io/badge/runtime-DSH%20plugin-4d6bfe" alt="运行时：DSH 插件" />
-  <img src="https://img.shields.io/badge/tests-16%20passing-22c3a6" alt="测试：16 通过" />
+  <img src="https://img.shields.io/badge/tests-18%20passing-22c3a6" alt="测试：18 通过" />
 </p>
 
 # OpenCode Go 用量面板
@@ -72,7 +72,7 @@ dsh --profile my-profile
 | 拖动胶囊 / 拖标题栏 / 双击 | 移动 / 最大化还原 |
 | 拖任一边 / 角 | 八向调整大小(自动避开滚动条) |
 | 视图切换 | **官方** / DSH |
-| 点击 🌐 / ⬇ / 刷新 | 中英切换(记忆选择)/ 导出 CSV / 手动刷新(或等 60s 自动) |
+| 点击 🌐 / ⬇ / ⟳ | 中英切换(记忆选择)/ 导出 CSV / 强制刷新(跳过缓存重抓) |
 | 点击模型行 | 展开费用分项(输入/输出/cache)与来源构成 |
 
 ## 数据来源与口径
@@ -110,7 +110,7 @@ dsh --profile my-profile
 
 ```sh
 npm run build      # 构建 lib 产物 + 回归门禁(注册形态 / harness 守卫断言)
-npm test           # 16 个用例(node --test,零依赖;每个测试独立临时 HOME,完全隔离)
+npm test           # 18 个用例(node --test,零依赖;每个测试独立临时 HOME,完全隔离)
 npm run typecheck  # src 语法校验
 ```
 
@@ -119,7 +119,7 @@ src/host.js    # Host 半区:纯 JS 聚合、缓存/快照、配额+官方明细
 src/client.js  # Client 半区:shell.overlay FAB + React 仪表盘(可拖拽缩放八向)
 lib/           # 构建产物(勿手改):host ESM 入口 + 浏览器注册形态 bundle
 scripts/       # build-lib.mjs(构建+回归门禁)
-tests/         # 16 个用例:契约/注册/官方抓取/凭据/快照/空响应诊断/聚合边界/i18n/客户端形态/源码门禁
+tests/         # 18 个用例:契约/注册/官方抓取/凭据/快照/空响应诊断/force 刷新/配额兜底/聚合边界/i18n/客户端形态/源码门禁
 cordis.patch.yml  # bundle 补丁层(插入插件行,inject webServer)
 ```
 
